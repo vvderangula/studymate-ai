@@ -193,7 +193,7 @@ class _StubProcessor:
         self._record = record
         self._error = error
 
-    def process(self, url: str) -> YoutubeMetadata:
+    def process(self, url: str, user_id: str | None = None) -> YoutubeMetadata:
         if self._error is not None:
             raise self._error
         assert self._record is not None
@@ -220,7 +220,7 @@ def _clear_overrides():
     app.dependency_overrides.clear()
 
 
-def test_process_route_returns_metadata() -> None:
+def test_process_route_returns_metadata(auth_headers) -> None:
     """A successful process call returns the stored video metadata."""
 
     record = YoutubeMetadata(
@@ -234,7 +234,7 @@ def test_process_route_returns_metadata() -> None:
     )
     app.dependency_overrides[get_youtube_processor] = lambda: _StubProcessor(record=record)
 
-    response = client.post("/youtube/process", json={"url": "https://youtu.be/vid12345678"})
+    response = client.post("/youtube/process", json={"url": "https://youtu.be/vid12345678"}, headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -243,31 +243,31 @@ def test_process_route_returns_metadata() -> None:
     assert body["chunk_count"] == 3
 
 
-def test_process_route_invalid_url_returns_400() -> None:
+def test_process_route_invalid_url_returns_400(auth_headers) -> None:
     """An invalid URL should be rejected with a 400."""
 
     app.dependency_overrides[get_youtube_processor] = lambda: _StubProcessor(
         error=InvalidYoutubeUrlError("bad url")
     )
 
-    response = client.post("/youtube/process", json={"url": "nope"})
+    response = client.post("/youtube/process", json={"url": "nope"}, headers=auth_headers)
 
     assert response.status_code == 400
 
 
-def test_process_route_missing_transcript_returns_422() -> None:
+def test_process_route_missing_transcript_returns_422(auth_headers) -> None:
     """A missing transcript should be reported as 422."""
 
     app.dependency_overrides[get_youtube_processor] = lambda: _StubProcessor(
         error=TranscriptUnavailableError("no transcript")
     )
 
-    response = client.post("/youtube/process", json={"url": "https://youtu.be/vid12345678"})
+    response = client.post("/youtube/process", json={"url": "https://youtu.be/vid12345678"}, headers=auth_headers)
 
     assert response.status_code == 422
 
 
-def test_chat_route_returns_timestamp_citations() -> None:
+def test_chat_route_returns_timestamp_citations(auth_headers) -> None:
     """Chat should return the answer with timestamp-based citations."""
 
     result = RagResult(
@@ -280,7 +280,7 @@ def test_chat_route_returns_timestamp_citations() -> None:
     )
     app.dependency_overrides[get_rag_service] = lambda: _StubRAGService(result=result)
 
-    response = client.post("/youtube/vid12345678/chat", json={"question": "What is it about?"})
+    response = client.post("/youtube/vid12345678/chat", json={"question": "What is it about?"}, headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -289,37 +289,37 @@ def test_chat_route_returns_timestamp_citations() -> None:
     assert body["citations"][0]["page"] == 10
 
 
-def test_chat_route_empty_question_returns_400() -> None:
+def test_chat_route_empty_question_returns_400(auth_headers) -> None:
     """A blank question should be rejected before reaching the service."""
 
     stub = _StubRAGService(result=RagResult("", [], {}))
     app.dependency_overrides[get_rag_service] = lambda: stub
 
-    response = client.post("/youtube/vid12345678/chat", json={"question": "  "})
+    response = client.post("/youtube/vid12345678/chat", json={"question": "  "}, headers=auth_headers)
 
     assert response.status_code == 400
     assert stub.calls == []
 
 
-def test_chat_route_unknown_video_returns_404() -> None:
+def test_chat_route_unknown_video_returns_404(auth_headers) -> None:
     """An unknown video should yield a 404 response."""
 
     app.dependency_overrides[get_rag_service] = lambda: _StubRAGService(
         error=PdfNotFoundError("missing")
     )
 
-    response = client.post("/youtube/missing/chat", json={"question": "What is it?"})
+    response = client.post("/youtube/missing/chat", json={"question": "What is it?"}, headers=auth_headers)
 
     assert response.status_code == 404
 
 
-def test_chat_route_unprocessed_video_returns_422() -> None:
+def test_chat_route_unprocessed_video_returns_422(auth_headers) -> None:
     """A video that has not been processed should yield a 422 response."""
 
     app.dependency_overrides[get_rag_service] = lambda: _StubRAGService(
         error=PdfNotProcessedError("not processed")
     )
 
-    response = client.post("/youtube/vid12345678/chat", json={"question": "What is it?"})
+    response = client.post("/youtube/vid12345678/chat", json={"question": "What is it?"}, headers=auth_headers)
 
     assert response.status_code == 422

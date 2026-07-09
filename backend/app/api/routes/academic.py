@@ -1,14 +1,12 @@
-"""HTTP routes for the AI Academic Search module.
-
-Provides paper discovery (Semantic Scholar → arXiv fallback), AI-generated
-summaries, and paper-level Q&A. All AI operations reuse the shared
-PromptBuilder and LLM services; no new pipeline is introduced.
-"""
+"""HTTP routes for the AI Academic Search module."""
 
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.core.auth import get_current_user
+from app.models.user import User
+from app.repositories.activity_repository import ActivityRepository
 from app.schemas.academic import (
     PaperAskRequest,
     PaperAskResponse,
@@ -41,7 +39,10 @@ def get_academic_service() -> PaperAcademicService:
 
 
 @router.post("/search", response_model=PaperSearchResponse)
-def search_papers(request: PaperSearchRequest) -> PaperSearchResponse:
+def search_papers(
+    request: PaperSearchRequest,
+    current_user: User = Depends(get_current_user),
+) -> PaperSearchResponse:
     """Search academic papers by topic.
 
     Tries Semantic Scholar first; falls back to arXiv when unavailable.
@@ -64,6 +65,11 @@ def search_papers(request: PaperSearchRequest) -> PaperSearchResponse:
             detail="Paper search is currently unavailable. Please try again later.",
         ) from exc
 
+    ActivityRepository().log(
+        current_user.id,
+        "research_search",
+        resource_title=query,
+    )
     return PaperSearchResponse(
         query=query,
         papers=[
@@ -84,6 +90,7 @@ def search_papers(request: PaperSearchRequest) -> PaperSearchResponse:
 def summarize_paper(
     request: PaperSummarizeRequest,
     service: PaperAcademicService = Depends(get_academic_service),
+    current_user: User = Depends(get_current_user),
 ) -> PaperSummarizeResponse:
     """Generate an AI summary for a paper.
 
@@ -113,12 +120,9 @@ def summarize_paper(
 def ask_paper(
     request: PaperAskRequest,
     service: PaperAcademicService = Depends(get_academic_service),
+    current_user: User = Depends(get_current_user),
 ) -> PaperAskResponse:
-    """Answer a question about a paper using its abstract as context.
-
-    Reuses the shared PromptBuilder and LLM pipeline. Responds with 400 for
-    an empty question and 502 if the LLM backend fails.
-    """
+    """Answer a question about a paper using its abstract as context."""
 
     question = request.question.strip()
     if not question:
@@ -140,6 +144,12 @@ def ask_paper(
             detail=str(exc),
         ) from exc
 
+    ActivityRepository().log(
+        current_user.id,
+        "research_asked",
+        resource_id=request.paper_id,
+        resource_title=request.title,
+    )
     return PaperAskResponse(
         paper_id=request.paper_id,
         question=question,

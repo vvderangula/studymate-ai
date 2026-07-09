@@ -4,6 +4,9 @@ import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
+from app.core.auth import get_current_user
+from app.models.user import User
+from app.repositories.activity_repository import ActivityRepository
 from app.repositories.pdf_repository import PdfMetadataRepository
 from app.schemas.pdf import (
     ChatRequest,
@@ -89,6 +92,7 @@ def get_rag_service() -> RAGService:
 def upload_pdf(
     file: UploadFile = File(...),
     service: PdfService = Depends(get_pdf_service),
+    current_user: User = Depends(get_current_user),
 ) -> UploadResponse:
     """Accept, validate, store, and record a PDF file.
 
@@ -97,7 +101,7 @@ def upload_pdf(
     """
 
     try:
-        record = service.upload(file)
+        record = service.upload(file, user_id=current_user.id)
     except PDFValidationError as exc:
         logger.warning("Rejected upload '%s': %s", file.filename, exc)
         raise HTTPException(
@@ -105,6 +109,12 @@ def upload_pdf(
             detail=str(exc),
         ) from exc
 
+    ActivityRepository().log(
+        current_user.id,
+        "pdf_uploaded",
+        resource_id=record.id,
+        resource_title=record.original_name,
+    )
     logger.info(
         "Stored PDF '%s' as %s (%d bytes)",
         record.original_name,
@@ -126,14 +136,23 @@ def upload_pdf(
 def process_pdf(
     file_id: str,
     service: ProcessingService = Depends(get_processing_service),
+    current_user: User = Depends(get_current_user),
 ) -> ProcessResponse:
     """Process a stored PDF into clean, chunked text.
 
     Runs the extraction, normalization, chunking, and local storage
     pipeline, updating the document's processing status. Responds with 404
-    if the file is unknown and 422 if processing fails (e.g. corrupted or
-    scanned PDFs).
+    if the file is unknown or owned by another user, and 422 if processing
+    fails (e.g. corrupted or scanned PDFs).
     """
+
+    # Ownership: only process if the PDF belongs to the current user.
+    pdf = PdfMetadataRepository().get(file_id)
+    if pdf is None or (pdf.user_id is not None and pdf.user_id != current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF not found.",
+        )
 
     try:
         record = service.process(file_id)
@@ -163,13 +182,15 @@ def chat_with_pdf(
     file_id: str,
     request: ChatRequest,
     service: RAGService = Depends(get_rag_service),
+    current_user: User = Depends(get_current_user),
 ) -> ChatResponse:
     """Answer a question about a processed PDF with page citations.
 
     Ensures the PDF's chunks are embedded, retrieves the most relevant
     context, and generates a grounded answer. Responds with 400 for an empty
-    question, 404 for an unknown PDF, 422 when the PDF has not been processed,
-    and 502 if the embedding or LLM backend fails.
+    question, 403 for a PDF not owned by the current user, 404 for an unknown
+    PDF, 422 when the PDF has not been processed, and 502 if the embedding or
+    LLM backend fails.
     """
 
     question = request.question.strip()
@@ -177,6 +198,15 @@ def chat_with_pdf(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Question must not be empty.",
+        )
+
+    # Ownership: if the PDF exists and belongs to another user, deny.
+    # Unknown file_ids are handled by the RAG service (returns 404).
+    pdf = PdfMetadataRepository().get(file_id)
+    if pdf is not None and pdf.user_id is not None and pdf.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied.",
         )
 
     try:
@@ -198,6 +228,12 @@ def chat_with_pdf(
             detail=str(exc),
         ) from exc
 
+    ActivityRepository().log(
+        current_user.id,
+        "pdf_chat",
+        resource_id=file_id,
+        resource_title=pdf.original_name if pdf is not None else None,
+    )
     return ChatResponse(
         answer=result.answer,
         citations=[

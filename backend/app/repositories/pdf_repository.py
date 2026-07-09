@@ -126,6 +126,26 @@ class PdfMetadataRepository:
 
         return [_row_to_metadata(row) for row in rows]
 
+    def list_by_user(self, user_id: str) -> list[PdfMetadata]:
+        """Return completed PDFs owned by the given user, newest first."""
+
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT id, filename, original_name, size, upload_time, status,
+                       user_id, processing_status, processed_at, page_count, chunk_count
+                FROM pdf_documents
+                WHERE processing_status = 'completed' AND user_id = ?
+                ORDER BY processed_at DESC
+                """,
+                (user_id,),
+            ).fetchall()
+        finally:
+            connection.close()
+
+        return [_row_to_metadata(row) for row in rows]
+
 
 def _row_to_metadata(row: sqlite3.Row) -> PdfMetadata:
     """Map a database row to a :class:`PdfMetadata` instance."""

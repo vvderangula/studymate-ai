@@ -77,7 +77,7 @@ class YoutubeProcessingService:
         self._chroma = chroma
         self._repository = repository
 
-    def process(self, url: str) -> YoutubeMetadata:
+    def process(self, url: str, user_id: str | None = None) -> YoutubeMetadata:
         """Run the full pipeline for a YouTube ``url`` and persist metadata.
 
         Returns:
@@ -94,7 +94,7 @@ class YoutubeProcessingService:
         full_text, offsets = self._flatten(transcript.segments)
         chunks = self._chunker.chunk(full_text)
         if not chunks:
-            self._mark_failed(url, transcript)
+            self._mark_failed(url, transcript, user_id)
             raise YoutubeProcessingError(
                 "The transcript did not contain any usable text."
             )
@@ -110,6 +110,7 @@ class YoutubeProcessingService:
             duration=transcript.duration,
             thumbnail=transcript.thumbnail,
             created_at=datetime.now(timezone.utc),
+            user_id=user_id,
             processing_status=STATUS_COMPLETED,
             processed_at=datetime.now(timezone.utc),
             chunk_count=len(chunks),
@@ -160,7 +161,7 @@ class YoutubeProcessingService:
             metadatas=metadatas,
         )
 
-    def _mark_failed(self, url: str, transcript: VideoTranscript) -> None:
+    def _mark_failed(self, url: str, transcript: VideoTranscript, user_id: str | None = None) -> None:
         """Record a failed processing attempt for a video."""
 
         self._repository.upsert(
@@ -171,6 +172,7 @@ class YoutubeProcessingService:
                 duration=transcript.duration,
                 thumbnail=transcript.thumbnail,
                 created_at=datetime.now(timezone.utc),
+                user_id=user_id,
                 processing_status=STATUS_FAILED,
                 processed_at=datetime.now(timezone.utc),
             )

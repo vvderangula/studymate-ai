@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # Study tools (quiz / notes) use broader context than chat.
     study_tools_top_k: int = 8
 
+    # JWT Authentication
+    jwt_secret_key: str = "studymate-dev-secret-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_days: int = 7
+
     # Hugging Face
     hf_api_key: str = ""
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"

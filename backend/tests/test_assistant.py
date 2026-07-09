@@ -62,14 +62,14 @@ class _StubLLM:
         return self._answer
 
 
-def test_chat_route_rejects_empty_message() -> None:
+def test_chat_route_rejects_empty_message(auth_headers) -> None:
     """An empty message should be rejected with 400."""
 
-    response = client.post("/assistant/chat", json={"message": "   "})
+    response = client.post("/assistant/chat", json={"message": "   "}, headers=auth_headers)
     assert response.status_code == 400
 
 
-def test_chat_route_accepts_valid_message(monkeypatch) -> None:
+def test_chat_route_accepts_valid_message(monkeypatch, auth_headers) -> None:
     """A valid message should call the LLM and return 200."""
 
     import app.api.routes.assistant as route_module
@@ -83,12 +83,13 @@ def test_chat_route_accepts_valid_message(monkeypatch) -> None:
     response = client.post(
         "/assistant/chat",
         json={"message": "What is photosynthesis?", "history": []},
+        headers=auth_headers,
     )
     assert response.status_code == 200
     assert "Photosynthesis" in response.json()["answer"]
 
 
-def test_chat_route_passes_history_to_llm(monkeypatch) -> None:
+def test_chat_route_passes_history_to_llm(monkeypatch, auth_headers) -> None:
     """History turns should be included in the user prompt sent to the LLM."""
 
     import app.api.routes.assistant as route_module
@@ -111,6 +112,7 @@ def test_chat_route_passes_history_to_llm(monkeypatch) -> None:
                 {"role": "assistant", "content": "Previous answer"},
             ],
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -118,9 +120,9 @@ def test_chat_route_passes_history_to_llm(monkeypatch) -> None:
     assert "Previous answer" in captured["user_prompt"]
 
 
-def test_chat_route_no_history_field() -> None:
+def test_chat_route_no_history_field(auth_headers) -> None:
     """history is optional; omitting it should not error."""
 
-    response = client.post("/assistant/chat", json={"message": "Hi"})
+    response = client.post("/assistant/chat", json={"message": "Hi"}, headers=auth_headers)
     # Will get 502 if no HF key is configured, not 422 or 400
     assert response.status_code in (200, 502)

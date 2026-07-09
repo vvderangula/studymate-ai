@@ -1,4 +1,4 @@
-import { API_BASE_URL, ApiError, readErrorDetail } from "./client";
+import { API_BASE_URL, ApiError, authHeaders, getToken, readErrorDetail } from "./client";
 
 export interface UploadResult {
   id: string;
@@ -45,6 +45,10 @@ export function uploadPdf(
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE_URL}/pdf/upload`);
+    const token = getToken();
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) {
@@ -84,6 +88,7 @@ export function uploadPdf(
 export async function processPdf(fileId: string): Promise<ProcessResult> {
   const response = await fetch(`${API_BASE_URL}/pdf/${fileId}/process`, {
     method: "POST",
+    headers: authHeaders(),
   });
   if (!response.ok) {
     throw new ApiError(response.status, await readErrorDetail(response));
@@ -98,7 +103,7 @@ export async function chatWithPdf(
 ): Promise<ChatResult> {
   const response = await fetch(`${API_BASE_URL}/pdf/${fileId}/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ question }),
   });
   if (!response.ok) {

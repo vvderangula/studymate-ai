@@ -226,14 +226,14 @@ def api_env(tmp_path, monkeypatch):
     app.dependency_overrides.clear()
 
 
-def test_api_process_valid_returns_metadata(api_env) -> None:
+def test_api_process_valid_returns_metadata(api_env, auth_headers) -> None:
     """A successful process call should return 200 with processing metadata."""
 
     _seed_record("api1")
     _write_pdf(api_env["upload_dir"], "api1")
     api_env["override"](pages=["Readable page text."])
 
-    response = client.post("/pdf/api1/process")
+    response = client.post("/pdf/api1/process", headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -243,23 +243,23 @@ def test_api_process_valid_returns_metadata(api_env) -> None:
     assert body["chunk_count"] >= 1
 
 
-def test_api_process_corrupted_returns_422(api_env) -> None:
+def test_api_process_corrupted_returns_422(api_env, auth_headers) -> None:
     """A corrupted PDF should yield a 422 response."""
 
     _seed_record("api2")
     _write_pdf(api_env["upload_dir"], "api2")
     api_env["override"](error=True)
 
-    response = client.post("/pdf/api2/process")
+    response = client.post("/pdf/api2/process", headers=auth_headers)
 
     assert response.status_code == 422
 
 
-def test_api_process_unknown_returns_404(api_env) -> None:
+def test_api_process_unknown_returns_404(api_env, auth_headers) -> None:
     """An unknown file id should yield a 404 response."""
 
     api_env["override"](pages=["text"])
 
-    response = client.post("/pdf/missing/process")
+    response = client.post("/pdf/missing/process", headers=auth_headers)
 
     assert response.status_code == 404

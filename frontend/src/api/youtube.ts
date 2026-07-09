@@ -1,4 +1,4 @@
-import { API_BASE_URL, ApiError, readErrorDetail } from "./client";
+import { API_BASE_URL, ApiError, authHeaders, readErrorDetail } from "./client";
 import type { ChatResult } from "./pdf";
 
 export interface YoutubeProcessResult {
@@ -15,7 +15,7 @@ export interface YoutubeProcessResult {
 export async function processYoutube(url: string): Promise<YoutubeProcessResult> {
   const response = await fetch(`${API_BASE_URL}/youtube/process`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ url }),
   });
   if (!response.ok) {
@@ -31,7 +31,7 @@ export async function chatWithYoutube(
 ): Promise<ChatResult> {
   const response = await fetch(`${API_BASE_URL}/youtube/${videoId}/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ question }),
   });
   if (!response.ok) {

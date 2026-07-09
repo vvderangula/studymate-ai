@@ -41,7 +41,7 @@ def _clear_overrides():
     app.dependency_overrides.clear()
 
 
-def test_chat_returns_answer_with_citations() -> None:
+def test_chat_returns_answer_with_citations(auth_headers) -> None:
     """A successful chat should return the answer, citations, and metadata."""
 
     result = RagResult(
@@ -54,7 +54,7 @@ def test_chat_returns_answer_with_citations() -> None:
     )
     _override(_StubRAGService(result=result))
 
-    response = client.post("/pdf/file1/chat", json={"question": "What is X?"})
+    response = client.post("/pdf/file1/chat", json={"question": "What is X?"}, headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -66,33 +66,33 @@ def test_chat_returns_answer_with_citations() -> None:
     assert body["citations"][0]["source_reference"] == "notes.pdf, page 3"
 
 
-def test_chat_empty_question_returns_400() -> None:
+def test_chat_empty_question_returns_400(auth_headers) -> None:
     """A blank question should be rejected before reaching the service."""
 
     stub = _StubRAGService(result=RagResult("", [], {}))
     _override(stub)
 
-    response = client.post("/pdf/file1/chat", json={"question": "   "})
+    response = client.post("/pdf/file1/chat", json={"question": "   "}, headers=auth_headers)
 
     assert response.status_code == 400
     assert stub.calls == []
 
 
-def test_chat_unknown_pdf_returns_404() -> None:
+def test_chat_unknown_pdf_returns_404(auth_headers) -> None:
     """An unknown PDF should yield a 404 response."""
 
     _override(_StubRAGService(error=PdfNotFoundError("File not found.")))
 
-    response = client.post("/pdf/missing/chat", json={"question": "What is X?"})
+    response = client.post("/pdf/missing/chat", json={"question": "What is X?"}, headers=auth_headers)
 
     assert response.status_code == 404
 
 
-def test_chat_unprocessed_pdf_returns_422() -> None:
+def test_chat_unprocessed_pdf_returns_422(auth_headers) -> None:
     """A PDF that has not been processed should yield a 422 response."""
 
     _override(_StubRAGService(error=PdfNotProcessedError("Not processed.")))
 
-    response = client.post("/pdf/file1/chat", json={"question": "What is X?"})
+    response = client.post("/pdf/file1/chat", json={"question": "What is X?"}, headers=auth_headers)
 
     assert response.status_code == 422

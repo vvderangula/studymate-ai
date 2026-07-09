@@ -1,4 +1,4 @@
-import { API_BASE_URL, ApiError, readErrorDetail } from "./client";
+import { API_BASE_URL, ApiError, authHeaders, readErrorDetail } from "./client";
 
 export interface ChatTurn {
   role: "user" | "assistant";
@@ -16,7 +16,7 @@ export async function generalChat(
 ): Promise<GeneralChatResult> {
   const response = await fetch(`${API_BASE_URL}/assistant/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ message, history }),
   });
   if (!response.ok) {

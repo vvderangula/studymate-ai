@@ -215,7 +215,7 @@ def _clear_overrides():
     app.dependency_overrides.clear()
 
 
-def test_sources_route_lists_processed(monkeypatch) -> None:
+def test_sources_route_lists_processed(monkeypatch, auth_headers) -> None:
     """The sources route should combine processed PDFs and videos."""
 
     from app.api.routes import study_tools as routes
@@ -239,17 +239,17 @@ def test_sources_route_lists_processed(monkeypatch) -> None:
     )
 
     class _PdfRepo:
-        def list_processed(self):
+        def list_by_user(self, user_id):
             return [pdf]
 
     class _YtRepo:
-        def list_processed(self):
+        def list_by_user(self, user_id):
             return [video]
 
     monkeypatch.setattr(routes, "PdfMetadataRepository", lambda: _PdfRepo())
     monkeypatch.setattr(routes, "YoutubeMetadataRepository", lambda: _YtRepo())
 
-    response = client.get("/study-tools/sources")
+    response = client.get("/study-tools/sources", headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -257,7 +257,7 @@ def test_sources_route_lists_processed(monkeypatch) -> None:
     assert ids == {"pdf1": "pdf", "vid1": "youtube"}
 
 
-def test_quiz_route_returns_questions() -> None:
+def test_quiz_route_returns_questions(auth_headers) -> None:
     """A successful quiz request returns the generated questions."""
 
     from app.services.study_tools.quiz_service import QuizQuestion
@@ -282,6 +282,7 @@ def test_quiz_route_returns_questions() -> None:
             "difficulty": "easy",
             "count": 5,
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -290,7 +291,7 @@ def test_quiz_route_returns_questions() -> None:
     assert body["questions"][0]["correct_answer"] == "a"
 
 
-def test_quiz_route_unknown_source_returns_404() -> None:
+def test_quiz_route_unknown_source_returns_404(auth_headers) -> None:
     """An unknown source should surface as a 404."""
 
     app.dependency_overrides[get_quiz_service] = lambda: _StubQuizService(
@@ -306,12 +307,13 @@ def test_quiz_route_unknown_source_returns_404() -> None:
             "difficulty": "easy",
             "count": 5,
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 404
 
 
-def test_quiz_route_rejects_invalid_count() -> None:
+def test_quiz_route_rejects_invalid_count(auth_headers) -> None:
     """An unsupported question count should fail schema validation."""
 
     response = client.post(
@@ -323,12 +325,13 @@ def test_quiz_route_rejects_invalid_count() -> None:
             "difficulty": "easy",
             "count": 7,
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 422
 
 
-def test_notes_route_returns_content() -> None:
+def test_notes_route_returns_content(auth_headers) -> None:
     """A successful notes request returns the generated Markdown."""
 
     app.dependency_overrides[get_notes_service] = lambda: _StubNotesService(
@@ -342,13 +345,14 @@ def test_notes_route_returns_content() -> None:
             "source_type": "youtube",
             "note_type": "chapter_summary",
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
     assert response.json()["content"] == "# Notes"
 
 
-def test_notes_route_not_ready_returns_422() -> None:
+def test_notes_route_not_ready_returns_422(auth_headers) -> None:
     """A source without usable content should surface as a 422."""
 
     app.dependency_overrides[get_notes_service] = lambda: _StubNotesService(
@@ -362,6 +366,7 @@ def test_notes_route_not_ready_returns_422() -> None:
             "source_type": "youtube",
             "note_type": "key_points",
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 422

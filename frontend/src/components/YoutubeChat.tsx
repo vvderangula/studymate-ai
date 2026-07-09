@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+
+import { useChatScroll } from "../hooks/useChatScroll";
 
 import { ApiError } from "../api/client";
 import {
@@ -63,8 +65,6 @@ export default function YoutubeChat() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState("");
-  const endRef = useRef<HTMLDivElement>(null);
-
   // Persist the conversation whenever it changes for an active video.
   useEffect(() => {
     if (videoId) {
@@ -73,9 +73,7 @@ export default function YoutubeChat() {
   }, [videoId, messages]);
 
   // Keep the latest message in view.
-  useEffect(() => {
-    endRef.current?.scrollIntoView?.({ behavior: "smooth" });
-  }, [messages, stage]);
+  const endRef = useChatScroll([messages, stage]);
 
   function pushMessage(message: Omit<ChatMessage, "id">) {
     setMessages((prev) => [...prev, { id: Date.now() + Math.random(), ...message }]);

@@ -28,3 +28,46 @@ export async function readErrorDetail(response: Response): Promise<string> {
   }
   return response.statusText || "Request failed";
 }
+
+// ---------------------------------------------------------------------------
+// Auth token helpers
+// ---------------------------------------------------------------------------
+
+const TOKEN_KEY = "studymate_token";
+
+export function getToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(token: string): void {
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+export function removeToken(): void {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+/**
+ * Return headers that include Authorization when a token is stored.
+ * Merge with additional headers as needed.
+ */
+export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const token = getToken();
+  const headers: Record<string, string> = { ...extra };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}

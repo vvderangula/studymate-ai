@@ -150,21 +150,21 @@ def test_parse_arxiv_empty_feed() -> None:
 # ------------------------------------------------------------------
 
 
-def test_search_route_rejects_empty_query() -> None:
+def test_search_route_rejects_empty_query(auth_headers) -> None:
     """An empty search query should return 400."""
 
-    response = client.post("/academic/search", json={"query": "  ", "limit": 5})
+    response = client.post("/academic/search", json={"query": "  ", "limit": 5}, headers=auth_headers)
     assert response.status_code == 400
 
 
-def test_search_route_rejects_invalid_limit() -> None:
+def test_search_route_rejects_invalid_limit(auth_headers) -> None:
     """A limit outside [1, 20] should fail schema validation."""
 
-    response = client.post("/academic/search", json={"query": "AI", "limit": 50})
+    response = client.post("/academic/search", json={"query": "AI", "limit": 50}, headers=auth_headers)
     assert response.status_code == 422
 
 
-def test_summarize_route_returns_summary() -> None:
+def test_summarize_route_returns_summary(auth_headers) -> None:
     """A successful summarize request should return the LLM output."""
 
     app.dependency_overrides[get_academic_service] = lambda: _StubAcademicService(
@@ -180,6 +180,7 @@ def test_summarize_route_returns_summary() -> None:
             "year": 2017,
             "abstract": "Transformer architecture.",
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -188,7 +189,7 @@ def test_summarize_route_returns_summary() -> None:
     assert "Short Summary" in body["summary"] or "Great paper" in body["summary"]
 
 
-def test_summarize_route_502_on_llm_failure() -> None:
+def test_summarize_route_502_on_llm_failure(auth_headers) -> None:
     """An LLM failure should surface as 502."""
 
     from app.services.llm import LLMError
@@ -206,12 +207,13 @@ def test_summarize_route_502_on_llm_failure() -> None:
             "year": None,
             "abstract": None,
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 502
 
 
-def test_ask_route_returns_answer() -> None:
+def test_ask_route_returns_answer(auth_headers) -> None:
     """A successful ask request should return the LLM answer."""
 
     app.dependency_overrides[get_academic_service] = lambda: _StubAcademicService(
@@ -226,6 +228,7 @@ def test_ask_route_returns_answer() -> None:
             "abstract": "We propose the Transformer.",
             "question": "What is the key mechanism?",
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -234,7 +237,7 @@ def test_ask_route_returns_answer() -> None:
     assert body["question"] == "What is the key mechanism?"
 
 
-def test_ask_route_rejects_empty_question() -> None:
+def test_ask_route_rejects_empty_question(auth_headers) -> None:
     """An empty question should be rejected with 400."""
 
     response = client.post(
@@ -245,6 +248,7 @@ def test_ask_route_rejects_empty_question() -> None:
             "abstract": None,
             "question": "   ",
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 400

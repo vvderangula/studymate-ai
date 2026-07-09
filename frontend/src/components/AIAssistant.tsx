@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { ApiError } from "../api/client";
 import { generalChat, type ChatTurn } from "../api/assistant";
+import { useChatScroll } from "../hooks/useChatScroll";
 import AcademicSearch from "./AcademicSearch";
 
 type Tab = "general" | "research";
@@ -28,10 +29,13 @@ export default function AIAssistant() {
   const [tab, setTab] = useState<Tab>("general");
 
   return (
-    <div className="space-y-4 sm:space-y-5">
-      {/* Tab bar */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex gap-2">
+    <div className="space-y-5">
+      {/* Mode selector — styled as a pill toggle, not a nav bar */}
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Mode
+        </p>
+        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1">
           {(["general", "research"] as Tab[]).map((name) => {
             const isActive = tab === name;
             return (
@@ -40,10 +44,10 @@ export default function AIAssistant() {
                 type="button"
                 onClick={() => setTab(name)}
                 className={
-                  "rounded-lg px-4 py-2 text-sm font-medium transition-colors " +
+                  "rounded-md px-5 py-2 text-sm font-medium transition-colors " +
                   (isActive
-                    ? "bg-orange-500 text-white shadow-sm"
-                    : "text-slate-600 hover:bg-slate-100")
+                    ? "bg-white text-orange-600 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700")
                 }
               >
                 {name === "general" ? "General Chat" : "Research Assistant"}
@@ -64,7 +68,7 @@ function GeneralChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const endRef = useRef<HTMLDivElement>(null);
+  const endRef = useChatScroll([messages, busy]);
 
   async function handleSend() {
     const text = input.trim();
@@ -93,9 +97,6 @@ function GeneralChat() {
       setError(friendlyError(err, "Failed to get a response. Please try again."));
     } finally {
       setBusy(false);
-      setTimeout(() => {
-        endRef.current?.scrollIntoView?.({ behavior: "smooth" });
-      }, 50);
     }
   }
 

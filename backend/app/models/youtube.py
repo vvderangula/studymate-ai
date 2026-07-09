@@ -27,6 +27,7 @@ class YoutubeMetadata:
     duration: int | None = None
     thumbnail: str | None = None
     created_at: datetime | None = None
+    user_id: str | None = None
     processing_status: str = "pending"
     processed_at: datetime | None = None
     chunk_count: int | None = None

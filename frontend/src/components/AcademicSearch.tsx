@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 
 import { ApiError } from "../api/client";
+import { useChatScroll } from "../hooks/useChatScroll";
 import {
   askPaper,
   searchPapers,
@@ -60,7 +61,12 @@ export default function AcademicSearch() {
   /** Per-paper conversation/summary cache. Keyed by paper_id. */
   const paperCache = useRef<Map<string, PaperState>>(new Map());
 
-  const endRef = useRef<HTMLDivElement>(null);
+  /** Scrolls to the bottom of the Q&A chat when messages or loading state changes. */
+  const endRef = useChatScroll([messages, askStage]);
+  /** Used to scroll the detail panel into view when a paper is selected. */
+  const detailRef = useRef<HTMLDivElement>(null);
+  /** Focused when a paper is selected so the user can type immediately. */
+  const askInputRef = useRef<HTMLTextAreaElement>(null);
 
   async function handleSearch() {
     const q = query.trim();
@@ -121,6 +127,12 @@ export default function AcademicSearch() {
       setSummaryStage("idle");
       setSummaryError("");
     }
+
+    // Scroll detail panel into view and focus the ask input
+    setTimeout(() => {
+      detailRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+      askInputRef.current?.focus();
+    }, 50);
   }
 
   async function handleSummarize() {
@@ -185,9 +197,6 @@ export default function AcademicSearch() {
       setAskError(friendlyError(err, "Failed to get an answer."));
     } finally {
       setAskStage("idle");
-      setTimeout(() => {
-        endRef.current?.scrollIntoView?.({ behavior: "smooth" });
-      }, 50);
     }
   }
 
@@ -284,7 +293,7 @@ export default function AcademicSearch() {
 
       {/* Paper detail panel */}
       {selectedPaper && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div ref={detailRef} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           {/* Header */}
           <div className="mb-4">
             <h2 className="text-base font-semibold text-slate-800 leading-snug">
@@ -412,6 +421,7 @@ export default function AcademicSearch() {
 
             <div className="flex items-end gap-2">
               <textarea
+                ref={askInputRef}
                 value={askInput}
                 onChange={(e) => setAskInput(e.target.value)}
                 onKeyDown={(e) => {

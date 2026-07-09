@@ -1,15 +1,12 @@
-"""HTTP routes for the Learn from YouTube module.
-
-Processing retrieves a video's transcript and runs it through the shared
-chunking, embedding, and vector-store pipeline. Chat reuses the shared RAG
-service, returning answers grounded in the transcript with timestamp
-citations.
-"""
+"""HTTP routes for the Learn from YouTube module."""
 
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.core.auth import get_current_user
+from app.models.user import User
+from app.repositories.activity_repository import ActivityRepository
 from app.repositories.youtube_repository import YoutubeMetadataRepository
 from app.schemas.pdf import ChatRequest, ChatResponse, Citation
 from app.schemas.youtube import ProcessYoutubeRequest, YoutubeProcessResponse
@@ -76,6 +73,7 @@ def get_rag_service() -> RAGService:
 def process_youtube(
     request: ProcessYoutubeRequest,
     service: YoutubeProcessingService = Depends(get_youtube_processor),
+    current_user: User = Depends(get_current_user),
 ) -> YoutubeProcessResponse:
     """Retrieve and process a YouTube video's transcript.
 
@@ -85,7 +83,7 @@ def process_youtube(
     """
 
     try:
-        record = service.process(request.url)
+        record = service.process(request.url, user_id=current_user.id)
     except InvalidYoutubeUrlError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -104,6 +102,12 @@ def process_youtube(
             detail=str(exc),
         ) from exc
 
+    ActivityRepository().log(
+        current_user.id,
+        "youtube_processed",
+        resource_id=record.video_id,
+        resource_title=record.title,
+    )
     return YoutubeProcessResponse(
         video_id=record.video_id,
         title=record.title,
@@ -120,6 +124,7 @@ def chat_with_youtube(
     video_id: str,
     request: ChatRequest,
     service: RAGService = Depends(get_rag_service),
+    current_user: User = Depends(get_current_user),
 ) -> ChatResponse:
     """Answer a question about a processed video with timestamp citations.
 
@@ -155,6 +160,13 @@ def chat_with_youtube(
             detail=str(exc),
         ) from exc
 
+    video_meta = YoutubeMetadataRepository().get(video_id)
+    ActivityRepository().log(
+        current_user.id,
+        "youtube_chat",
+        resource_id=video_id,
+        resource_title=video_meta.title if video_meta else None,
+    )
     return ChatResponse(
         answer=result.answer,
         citations=[

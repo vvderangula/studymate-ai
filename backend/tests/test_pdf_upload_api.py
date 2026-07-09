@@ -20,19 +20,20 @@ def isolated_storage(tmp_path, monkeypatch):
     yield
 
 
-def _upload(data: bytes, filename: str = "doc.pdf", content_type: str = "application/pdf"):
+def _upload(data: bytes, filename: str = "doc.pdf", content_type: str = "application/pdf", headers: dict | None = None):
     """Post a file to the upload endpoint."""
 
     return client.post(
         "/pdf/upload",
         files={"file": (filename, data, content_type)},
+        headers=headers or {},
     )
 
 
-def test_upload_valid_pdf_returns_metadata() -> None:
+def test_upload_valid_pdf_returns_metadata(auth_headers) -> None:
     """A valid PDF upload should return 201 with full metadata."""
 
-    response = _upload(b"%PDF-1.4 valid content")
+    response = _upload(b"%PDF-1.4 valid content", headers=auth_headers)
 
     assert response.status_code == 201
     body = response.json()
@@ -40,39 +41,38 @@ def test_upload_valid_pdf_returns_metadata() -> None:
     assert body["filename"] == f"{body['id']}.pdf"
     assert body["size"] == len(b"%PDF-1.4 valid content")
     assert body["status"] == "uploaded"
-    assert body["user_id"] is None
     assert "upload_time" in body
 
 
-def test_upload_rejects_invalid_extension() -> None:
+def test_upload_rejects_invalid_extension(auth_headers) -> None:
     """A non-.pdf extension should be rejected with 400."""
 
-    response = _upload(b"%PDF-1.4 data", filename="notes.txt")
+    response = _upload(b"%PDF-1.4 data", filename="notes.txt", headers=auth_headers)
 
     assert response.status_code == 400
 
 
-def test_upload_rejects_invalid_mime() -> None:
+def test_upload_rejects_invalid_mime(auth_headers) -> None:
     """A non-PDF content type should be rejected with 400."""
 
-    response = _upload(b"%PDF-1.4 data", content_type="text/plain")
+    response = _upload(b"%PDF-1.4 data", content_type="text/plain", headers=auth_headers)
 
     assert response.status_code == 400
 
 
-def test_upload_rejects_corrupted_pdf() -> None:
+def test_upload_rejects_corrupted_pdf(auth_headers) -> None:
     """A file missing the PDF signature should be rejected with 400."""
 
-    response = _upload(b"this is not a pdf")
+    response = _upload(b"this is not a pdf", headers=auth_headers)
 
     assert response.status_code == 400
 
 
-def test_upload_rejects_oversized_file(monkeypatch) -> None:
+def test_upload_rejects_oversized_file(monkeypatch, auth_headers) -> None:
     """A file above the configured size limit should be rejected with 400."""
 
     monkeypatch.setattr(settings, "max_upload_size_mb", 0)
 
-    response = _upload(b"%PDF-1.4 data")
+    response = _upload(b"%PDF-1.4 data", headers=auth_headers)
 
     assert response.status_code == 400

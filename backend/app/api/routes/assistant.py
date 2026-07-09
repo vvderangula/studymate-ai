@@ -1,15 +1,12 @@
-"""HTTP routes for the AI Assistant – general chat endpoint.
-
-Uses the shared HuggingFaceLLMService directly (no RAG). The frontend
-maintains full conversation history; each request includes previous turns so
-the model can produce contextually aware replies without server-side session
-state.
-"""
+"""HTTP routes for the AI Assistant – general chat endpoint."""
 
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.core.auth import get_current_user
+from app.models.user import User
+from app.repositories.activity_repository import ActivityRepository
 from app.schemas.assistant import GeneralChatRequest, GeneralChatResponse
 from app.services.llm import HuggingFaceLLMService, LLMError
 
@@ -24,7 +21,10 @@ _SYSTEM_PROMPT = (
 
 
 @router.post("/chat", response_model=GeneralChatResponse)
-def general_chat(request: GeneralChatRequest) -> GeneralChatResponse:
+def general_chat(
+    request: GeneralChatRequest,
+    current_user: User = Depends(get_current_user),
+) -> GeneralChatResponse:
     """Generate a reply to a general question.
 
     The frontend sends the full conversation history in ``history`` so the
@@ -53,6 +53,7 @@ def general_chat(request: GeneralChatRequest) -> GeneralChatResponse:
             detail=str(exc),
         ) from exc
 
+    ActivityRepository().log(current_user.id, "assistant_chat")
     return GeneralChatResponse(answer=answer)
 
 

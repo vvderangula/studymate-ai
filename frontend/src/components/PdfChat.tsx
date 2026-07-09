@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+
+import { useChatScroll } from "../hooks/useChatScroll";
 
 import { ApiError } from "../api/client";
 import {
@@ -45,8 +47,6 @@ export default function PdfChat() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState("");
-  const endRef = useRef<HTMLDivElement>(null);
-
   // Resume the most recent conversation on first mount, if one exists.
   useEffect(() => {
     const lastId = getLastPdfId();
@@ -65,9 +65,7 @@ export default function PdfChat() {
   }, [fileId, messages]);
 
   // Keep the latest message in view.
-  useEffect(() => {
-    endRef.current?.scrollIntoView?.({ behavior: "smooth" });
-  }, [messages, stage]);
+  const endRef = useChatScroll([messages, stage]);
 
   function pushMessage(message: Omit<ChatMessage, "id">) {
     setMessages((prev) => [...prev, { id: Date.now() + Math.random(), ...message }]);

@@ -1,4 +1,4 @@
-import { API_BASE_URL, ApiError, readErrorDetail } from "./client";
+import { API_BASE_URL, ApiError, authHeaders, readErrorDetail } from "./client";
 
 export interface PaperItem {
   paper_id: string;
@@ -32,7 +32,7 @@ export async function searchPapers(
 ): Promise<PaperSearchResult> {
   const response = await fetch(`${API_BASE_URL}/academic/search`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ query, limit }),
   });
   if (!response.ok) {
@@ -45,7 +45,7 @@ export async function searchPapers(
 export async function summarizePaper(paper: PaperItem): Promise<PaperSummary> {
   const response = await fetch(`${API_BASE_URL}/academic/papers/summarize`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       paper_id: paper.paper_id,
       title: paper.title,
@@ -67,7 +67,7 @@ export async function askPaper(
 ): Promise<PaperAnswer> {
   const response = await fetch(`${API_BASE_URL}/academic/papers/ask`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       paper_id: paper.paper_id,
       title: paper.title,

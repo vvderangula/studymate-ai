@@ -1,4 +1,4 @@
-import { API_BASE_URL, ApiError, readErrorDetail } from "./client";
+import { API_BASE_URL, ApiError, authHeaders, readErrorDetail } from "./client";
 
 export type SourceType = "pdf" | "youtube";
 export type QuestionType = "mcq" | "true_false" | "short_answer";
@@ -42,7 +42,9 @@ export interface NotesResult {
 
 /** List processed PDFs and YouTube videos available for study tools. */
 export async function listSources(): Promise<SourceItem[]> {
-  const response = await fetch(`${API_BASE_URL}/study-tools/sources`);
+  const response = await fetch(`${API_BASE_URL}/study-tools/sources`, {
+    headers: authHeaders(),
+  });
   if (!response.ok) {
     throw new ApiError(response.status, await readErrorDetail(response));
   }
@@ -60,7 +62,7 @@ export async function generateQuiz(params: {
 }): Promise<QuizResult> {
   const response = await fetch(`${API_BASE_URL}/study-tools/quiz`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       source_id: params.sourceId,
       source_type: params.sourceType,
@@ -83,7 +85,7 @@ export async function generateNotes(params: {
 }): Promise<NotesResult> {
   const response = await fetch(`${API_BASE_URL}/study-tools/notes`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       source_id: params.sourceId,
       source_type: params.sourceType,

@@ -1,15 +1,12 @@
-"""HTTP routes for the AI Study Tools module (quiz and notes).
-
-Both generators reuse the shared retrieval, prompt-building, embedding,
-vector-store, and LLM components. Sources may be processed PDFs or processed
-YouTube videos; retrieval is identical for both, so only the existence check
-and on-demand indexing differ by source type.
-"""
+"""HTTP routes for the AI Study Tools module (quiz and notes)."""
 
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.core.auth import get_current_user
+from app.models.user import User
+from app.repositories.activity_repository import ActivityRepository
 from app.repositories.pdf_repository import PdfMetadataRepository
 from app.repositories.youtube_repository import YoutubeMetadataRepository
 from app.schemas.study_tools import (
@@ -88,15 +85,15 @@ def get_notes_service() -> NotesService:
 
 
 @router.get("/sources", response_model=SourcesResponse)
-def list_sources() -> SourcesResponse:
-    """List processed PDFs and YouTube videos available for generation."""
+def list_sources(current_user: User = Depends(get_current_user)) -> SourcesResponse:
+    """List processed PDFs and YouTube videos owned by the current user."""
 
     sources: list[SourceItem] = []
-    for pdf in PdfMetadataRepository().list_processed():
+    for pdf in PdfMetadataRepository().list_by_user(current_user.id):
         sources.append(
             SourceItem(id=pdf.id, type=SourceType.pdf, title=pdf.original_name)
         )
-    for video in YoutubeMetadataRepository().list_processed():
+    for video in YoutubeMetadataRepository().list_by_user(current_user.id):
         sources.append(
             SourceItem(id=video.video_id, type=SourceType.youtube, title=video.title)
         )
@@ -107,6 +104,7 @@ def list_sources() -> SourcesResponse:
 def generate_quiz(
     request: QuizRequest,
     service: QuizService = Depends(get_quiz_service),
+    current_user: User = Depends(get_current_user),
 ) -> QuizResponse:
     """Generate a quiz from a processed source.
 
@@ -140,7 +138,7 @@ def generate_quiz(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
 
-    return QuizResponse(
+    quiz_response = QuizResponse(
         source_id=request.source_id,
         source_type=request.source_type,
         question_type=request.question_type,
@@ -156,12 +154,15 @@ def generate_quiz(
             for question in questions
         ],
     )
+    ActivityRepository().log(current_user.id, "quiz_generated", resource_id=request.source_id)
+    return quiz_response
 
 
 @router.post("/notes", response_model=NotesResponse)
 def generate_notes(
     request: NotesRequest,
     service: NotesService = Depends(get_notes_service),
+    current_user: User = Depends(get_current_user),
 ) -> NotesResponse:
     """Generate study notes from a processed source.
 
@@ -192,6 +193,7 @@ def generate_notes(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
 
+    ActivityRepository().log(current_user.id, "notes_generated", resource_id=request.source_id)
     return NotesResponse(
         source_id=request.source_id,
         source_type=request.source_type,

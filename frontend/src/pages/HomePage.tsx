@@ -50,8 +50,8 @@ export default function HomePage() {
 
   return (
     <section>
-      <h1 className="text-center text-3xl font-bold tracking-tight">
-        Welcome to StudyMate AI
+      <h1 className="text-center text-2xl font-bold tracking-tight text-slate-800">
+        Study Modules
       </h1>
 
       {/* Full-width module selector */}

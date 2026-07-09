@@ -31,13 +31,14 @@ class YoutubeMetadataRepository:
                 """
                 INSERT INTO youtube_videos (
                     video_id, url, title, duration, thumbnail, created_at,
-                    processing_status, processed_at, chunk_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    user_id, processing_status, processed_at, chunk_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(video_id) DO UPDATE SET
                     url = excluded.url,
                     title = excluded.title,
                     duration = excluded.duration,
                     thumbnail = excluded.thumbnail,
+                    user_id = COALESCE(youtube_videos.user_id, excluded.user_id),
                     processing_status = excluded.processing_status,
                     processed_at = excluded.processed_at,
                     chunk_count = excluded.chunk_count
@@ -49,6 +50,7 @@ class YoutubeMetadataRepository:
                     record.duration,
                     record.thumbnail,
                     record.created_at.isoformat() if record.created_at else None,
+                    record.user_id,
                     record.processing_status,
                     record.processed_at.isoformat() if record.processed_at else None,
                     record.chunk_count,
@@ -66,7 +68,7 @@ class YoutubeMetadataRepository:
             row = connection.execute(
                 """
                 SELECT video_id, url, title, duration, thumbnail, created_at,
-                       processing_status, processed_at, chunk_count
+                       user_id, processing_status, processed_at, chunk_count
                 FROM youtube_videos
                 WHERE video_id = ?
                 """,
@@ -87,11 +89,31 @@ class YoutubeMetadataRepository:
             rows = connection.execute(
                 """
                 SELECT video_id, url, title, duration, thumbnail, created_at,
-                       processing_status, processed_at, chunk_count
+                       user_id, processing_status, processed_at, chunk_count
                 FROM youtube_videos
                 WHERE processing_status = 'completed'
                 ORDER BY processed_at DESC
                 """
+            ).fetchall()
+        finally:
+            connection.close()
+
+        return [_row_to_metadata(row) for row in rows]
+
+    def list_by_user(self, user_id: str) -> list[YoutubeMetadata]:
+        """Return completed videos owned by the given user, newest first."""
+
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT video_id, url, title, duration, thumbnail, created_at,
+                       user_id, processing_status, processed_at, chunk_count
+                FROM youtube_videos
+                WHERE processing_status = 'completed' AND user_id = ?
+                ORDER BY processed_at DESC
+                """,
+                (user_id,),
             ).fetchall()
         finally:
             connection.close()
@@ -111,6 +133,7 @@ def _row_to_metadata(row: sqlite3.Row) -> YoutubeMetadata:
         duration=row["duration"],
         thumbnail=row["thumbnail"],
         created_at=datetime.fromisoformat(created_at) if created_at else None,
+        user_id=row["user_id"],
         processing_status=row["processing_status"],
         processed_at=datetime.fromisoformat(processed_at) if processed_at else None,
         chunk_count=row["chunk_count"],
