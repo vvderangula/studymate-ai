@@ -9,6 +9,7 @@ lazily so the application can start without them and tests can inject fakes.
 import logging
 import re
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -112,26 +113,74 @@ class YoutubeTranscriptService:
         """Retrieve raw transcript cues for a video."""
 
         try:
-            from youtube_transcript_api import YouTubeTranscriptApi
+            from youtube_transcript_api import (
+                FailedToCreateConsentCookie,
+                IpBlocked,
+                NoTranscriptFound,
+                RequestBlocked,
+                TranscriptsDisabled,
+                VideoUnavailable,
+                YouTubeTranscriptApi,
+            )
         except ImportError as exc:  # pragma: no cover - dependency missing
             raise TranscriptUnavailableError(
                 "Transcript support is not available."
             ) from exc
 
         try:
-            raw = YouTubeTranscriptApi.get_transcript(video_id)
-        except Exception as exc:  # noqa: BLE001 - library raises many subtypes
-            logger.warning("Transcript unavailable for %s: %s", video_id, exc)
+            api = YouTubeTranscriptApi()
+            transcript_list = api.list(video_id)
+
+            try:
+                transcript = transcript_list.find_manually_created_transcript(
+                    ["en", "en-US", "en-GB"]
+                )
+            except NoTranscriptFound:
+                try:
+                    transcript = transcript_list.find_generated_transcript(
+                        ["en", "en-US", "en-GB"]
+                    )
+                except NoTranscriptFound:
+                    transcript = next(iter(transcript_list), None)
+
+            if transcript is None:
+                raise TranscriptUnavailableError(
+                    "No transcript was found for this video."
+                )
+
+            raw = transcript.fetch()
+        except TranscriptsDisabled as exc:
+            logger.warning("Transcripts disabled for %s: %s", video_id, exc)
             raise TranscriptUnavailableError(
-                "No transcript is available for this video."
+                "Transcripts are disabled for this video."
+            ) from exc
+        except VideoUnavailable as exc:
+            logger.warning("Video unavailable for %s: %s", video_id, exc)
+            raise TranscriptUnavailableError(
+                "This video is unavailable or restricted in your region."
+            ) from exc
+        except (RequestBlocked, IpBlocked, FailedToCreateConsentCookie) as exc:
+            logger.warning("Transcript access blocked for %s: %s", video_id, exc)
+            raise TranscriptUnavailableError(
+                "Transcript retrieval is temporarily blocked. Please try again later."
+            ) from exc
+        except NoTranscriptFound as exc:
+            logger.warning("No transcript found for %s: %s", video_id, exc)
+            raise TranscriptUnavailableError(
+                "No transcript was found for this video."
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - library raises many subtypes
+            logger.warning("Transcript retrieval failed for %s: %s", video_id, exc)
+            raise TranscriptUnavailableError(
+                "Failed to retrieve transcript for this video."
             ) from exc
 
         segments: list[TranscriptSegment] = []
         for cue in raw:
-            text = str(cue.get("text", "")).strip()
+            text = _cue_text(cue)
             if text:
                 segments.append(
-                    TranscriptSegment(text=text, start=float(cue.get("start", 0.0)))
+                    TranscriptSegment(text=text, start=_cue_start(cue))
                 )
         return segments
 
@@ -165,3 +214,19 @@ class YoutubeTranscriptService:
         if not segments:
             return None
         return int(segments[-1].start)
+
+
+def _cue_text(cue: Any) -> str:
+    """Return cue text from either dict-like or object-like transcript items."""
+
+    if isinstance(cue, dict):
+        return str(cue.get("text", "")).strip()
+    return str(getattr(cue, "text", "")).strip()
+
+
+def _cue_start(cue: Any) -> float:
+    """Return cue start offset from either dict-like or object-like items."""
+
+    if isinstance(cue, dict):
+        return float(cue.get("start", 0.0))
+    return float(getattr(cue, "start", 0.0))

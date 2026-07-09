@@ -166,6 +166,41 @@ class PromptBuilder:
             "applicable to the context, say so briefly in Markdown."
         )
 
+    def academic_summary_system_prompt(self) -> str:
+        """Return the system instruction for academic paper summarization."""
+
+        return ACADEMIC_SUMMARY_SYSTEM_PROMPT
+
+    def academic_summary_user_prompt(self, paper_context: str) -> str:
+        """Build the user prompt for generating an academic paper summary.
+
+        Args:
+            paper_context: Pre-formatted string containing title, authors,
+                year, and abstract.
+
+        Returns:
+            A prompt instructing the model to emit a structured Markdown summary.
+        """
+
+        return (
+            f"Paper:\n{paper_context}\n\n"
+            "Task: Generate a structured analysis with the following sections:\n"
+            "## Short Summary\n(2–3 sentences)\n\n"
+            "## Key Contributions\n(bullet list)\n\n"
+            "## Important Findings\n(bullet list)\n\n"
+            "## Conclusion\n(1–2 sentences)\n\n"
+            "Use Markdown formatting and base the analysis strictly on the paper "
+            "information provided."
+        )
+
+
+ACADEMIC_SUMMARY_SYSTEM_PROMPT = (
+    "You are StudyMate AI, a research assistant. Based on the provided academic "
+    "paper metadata and abstract, produce a concise structured analysis in "
+    "GitHub-flavored Markdown. Base your analysis strictly on the provided "
+    "information. Be accurate and objective."
+)
+
 
 def _join_context(context_chunks: list[str]) -> str:
     """Join context chunks into a numbered block for prompting."""
