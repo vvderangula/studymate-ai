@@ -107,6 +107,25 @@ class PdfMetadataRepository:
             return None
         return _row_to_metadata(row)
 
+    def list_processed(self) -> list[PdfMetadata]:
+        """Return all PDFs whose processing has completed, newest first."""
+
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT id, filename, original_name, size, upload_time, status,
+                       user_id, processing_status, processed_at, page_count, chunk_count
+                FROM pdf_documents
+                WHERE processing_status = 'completed'
+                ORDER BY processed_at DESC
+                """
+            ).fetchall()
+        finally:
+            connection.close()
+
+        return [_row_to_metadata(row) for row in rows]
+
 
 def _row_to_metadata(row: sqlite3.Row) -> PdfMetadata:
     """Map a database row to a :class:`PdfMetadata` instance."""

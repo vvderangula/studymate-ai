@@ -1,12 +1,13 @@
 import { useState } from "react";
 
 import PdfChat from "../components/PdfChat";
+import StudyTools from "../components/StudyTools";
 import YoutubeChat from "../components/YoutubeChat";
 
 const MODULES = [
   "Learn from PDF",
   "Learn from YouTube",
-  "AI Quiz Generator",
+  "AI Study Tools",
   "AI Academic Search",
 ] as const;
 
@@ -80,6 +81,8 @@ export default function HomePage() {
           <PdfChat />
         ) : selected === "Learn from YouTube" ? (
           <YoutubeChat />
+        ) : selected === "AI Study Tools" ? (
+          <StudyTools />
         ) : (
           <PlaceholderChat
             module={selected}

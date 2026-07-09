@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     chroma_dir: str = "storage/chroma"
     retrieval_top_k: int = 4
 
+    # Study tools (quiz / notes) use broader context than chat.
+    study_tools_top_k: int = 8
+
     # Hugging Face
     hf_api_key: str = ""
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"

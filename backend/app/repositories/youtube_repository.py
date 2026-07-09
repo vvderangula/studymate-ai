@@ -79,6 +79,25 @@ class YoutubeMetadataRepository:
             return None
         return _row_to_metadata(row)
 
+    def list_processed(self) -> list[YoutubeMetadata]:
+        """Return all videos whose processing has completed, newest first."""
+
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT video_id, url, title, duration, thumbnail, created_at,
+                       processing_status, processed_at, chunk_count
+                FROM youtube_videos
+                WHERE processing_status = 'completed'
+                ORDER BY processed_at DESC
+                """
+            ).fetchall()
+        finally:
+            connection.close()
+
+        return [_row_to_metadata(row) for row in rows]
+
 
 def _row_to_metadata(row: sqlite3.Row) -> YoutubeMetadata:
     """Map a database row to a :class:`YoutubeMetadata` instance."""
