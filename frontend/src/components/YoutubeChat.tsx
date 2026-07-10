@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { useChatScroll } from "../hooks/useChatScroll";
+import { useAuth } from "../context/AuthContext";
 
 import { ApiError } from "../api/client";
 import {
@@ -56,6 +57,8 @@ function friendlyChatError(err: unknown): string {
 
 /** Learn from YouTube module: process a video transcript, then chat with it. */
 export default function YoutubeChat() {
+  const { user } = useAuth();
+  const userId = user?.user_id;
   const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState("");
   const [title, setTitle] = useState("");
@@ -65,12 +68,23 @@ export default function YoutubeChat() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState("");
+  useEffect(() => {
+    setUrl("");
+    setVideoId("");
+    setTitle("");
+    setStatus("idle");
+    setProcessError("");
+    setInput("");
+    setMessages([]);
+    setError("");
+  }, [userId]);
+
   // Persist the conversation whenever it changes for an active video.
   useEffect(() => {
-    if (videoId) {
-      saveConversation(videoId, messages);
+    if (videoId && userId) {
+      saveConversation(videoId, messages, userId, "youtube");
     }
-  }, [videoId, messages]);
+  }, [videoId, messages, userId]);
 
   // Keep the latest message in view.
   const endRef = useChatScroll([messages, stage]);
@@ -96,7 +110,7 @@ export default function YoutubeChat() {
       setTitle(result.title);
       setStatus("ready");
 
-      const existing = loadConversation(result.video_id);
+      const existing = loadConversation(result.video_id, userId, "youtube");
       if (existing.length > 0) {
         setMessages(existing);
         return;
@@ -152,7 +166,7 @@ export default function YoutubeChat() {
 
   function handleClear() {
     if (videoId) {
-      clearConversation(videoId);
+      clearConversation(videoId, userId, "youtube");
     }
     setMessages([]);
     setError("");

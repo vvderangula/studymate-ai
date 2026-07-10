@@ -72,6 +72,22 @@ def _indexer_and_repository(source_type: SourceType):
     return _pdf_indexer, PdfMetadataRepository()
 
 
+class _UserScopedRepository:
+    """Restrict source lookup to records owned by the authenticated user."""
+
+    def __init__(self, repository, user_id: str) -> None:
+        self._repository = repository
+        self._user_id = user_id
+
+    def get(self, source_id: str):
+        record = self._repository.get(source_id)
+        if record is None:
+            return None
+        if getattr(record, "user_id", None) != self._user_id:
+            return None
+        return record
+
+
 def get_quiz_service() -> QuizService:
     """Provide a :class:`QuizService` wired with the shared RAG components."""
 
@@ -114,6 +130,7 @@ def generate_quiz(
     """
 
     indexer, repository = _indexer_and_repository(request.source_type)
+    scoped_repository = _UserScopedRepository(repository, current_user.id)
 
     try:
         questions = service.generate(
@@ -122,7 +139,7 @@ def generate_quiz(
             difficulty=request.difficulty.value,
             count=request.count,
             indexer=indexer,
-            repository=repository,
+            repository=scoped_repository,
         )
     except SourceNotFoundError as exc:
         raise HTTPException(
@@ -171,13 +188,14 @@ def generate_notes(
     """
 
     indexer, repository = _indexer_and_repository(request.source_type)
+    scoped_repository = _UserScopedRepository(repository, current_user.id)
 
     try:
         content = service.generate(
             request.source_id,
             note_type=request.note_type.value,
             indexer=indexer,
-            repository=repository,
+            repository=scoped_repository,
         )
     except SourceNotFoundError as exc:
         raise HTTPException(

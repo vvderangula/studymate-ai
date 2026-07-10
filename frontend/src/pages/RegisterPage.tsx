@@ -52,16 +52,16 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-10">
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-4">
       <div className="w-full max-w-md">
         {/* Logo / brand */}
-        <div className="mb-8 text-center">
-          <span className="text-3xl font-bold text-orange-500">StudyMate AI</span>
+        <div className="mb-5 text-center">
+          <span className="text-2xl font-bold text-orange-500">StudyMate AI</span>
           <p className="mt-1 text-sm text-slate-500">Your AI-powered personal tutor</p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-          <h1 className="mb-6 text-xl font-semibold text-slate-800">Create your account</h1>
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h1 className="mb-4 text-xl font-semibold text-slate-800">Create your account</h1>
 
           {error && (
             <div
@@ -72,7 +72,7 @@ export default function RegisterPage() {
             </div>
           )}
 
-          <form onSubmit={(e) => void handleSubmit(e)} noValidate className="space-y-4">
+          <form onSubmit={(e) => void handleSubmit(e)} noValidate className="space-y-3">
             <div>
               <label htmlFor="fullName" className="mb-1.5 block text-sm font-medium text-slate-700">
                 Full Name
@@ -85,7 +85,7 @@ export default function RegisterPage() {
                 onChange={(e) => setFullName(e.target.value)}
                 disabled={busy}
                 placeholder="Jane Smith"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
+                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
               />
             </div>
 
@@ -101,7 +101,7 @@ export default function RegisterPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={busy}
                 placeholder="you@example.com"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
+                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
               />
             </div>
 
@@ -117,7 +117,7 @@ export default function RegisterPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={busy}
                 placeholder="Min. 8 characters"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
+                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
               />
             </div>
 
@@ -133,7 +133,7 @@ export default function RegisterPage() {
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 disabled={busy}
                 placeholder="Repeat your password"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
+                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
               />
             </div>
 
@@ -146,7 +146,7 @@ export default function RegisterPage() {
             </button>
           </form>
 
-          <p className="mt-5 text-center text-sm text-slate-500">
+          <p className="mt-4 text-center text-sm text-slate-500">
             Already have an account?{" "}
             <Link to="/login" className="font-medium text-orange-500 hover:text-orange-600">
               Sign in

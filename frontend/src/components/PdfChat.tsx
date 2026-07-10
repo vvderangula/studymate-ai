@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { useChatScroll } from "../hooks/useChatScroll";
+import { useAuth } from "../context/AuthContext";
 
 import { ApiError } from "../api/client";
 import {
@@ -41,6 +42,8 @@ function friendlyError(err: unknown): string {
 
 /** Learn from PDF module: upload and process a PDF, then chat with its contents. */
 export default function PdfChat() {
+  const { user } = useAuth();
+  const userId = user?.user_id;
   const [fileId, setFileId] = useState<string>("");
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>("idle");
   const [stage, setStage] = useState<ChatStage>("idle");
@@ -49,20 +52,27 @@ export default function PdfChat() {
   const [error, setError] = useState("");
   // Resume the most recent conversation on first mount, if one exists.
   useEffect(() => {
-    const lastId = getLastPdfId();
+    const lastId = getLastPdfId(userId);
     if (lastId) {
       setFileId(lastId);
-      setMessages(loadConversation(lastId));
+      setMessages(loadConversation(lastId, userId, "pdf"));
       setUploadStatus("ready");
+      return;
     }
-  }, []);
+
+    setFileId("");
+    setMessages([]);
+    setUploadStatus("idle");
+    setInput("");
+    setError("");
+  }, [userId]);
 
   // Persist the conversation whenever it changes for an active PDF.
   useEffect(() => {
-    if (fileId) {
-      saveConversation(fileId, messages);
+    if (fileId && userId) {
+      saveConversation(fileId, messages, userId, "pdf");
     }
-  }, [fileId, messages]);
+  }, [fileId, messages, userId]);
 
   // Keep the latest message in view.
   const endRef = useChatScroll([messages, stage]);
@@ -72,11 +82,11 @@ export default function PdfChat() {
   }
 
   function handleProcessed(id: string, result: ProcessResult) {
-    setLastPdfId(id);
+    setLastPdfId(id, userId);
     setFileId(id);
     setError("");
 
-    const existing = loadConversation(id);
+    const existing = loadConversation(id, userId, "pdf");
     if (existing.length > 0) {
       setMessages(existing);
       return;
@@ -130,7 +140,7 @@ export default function PdfChat() {
 
   function handleClear() {
     if (fileId) {
-      clearConversation(fileId);
+      clearConversation(fileId, userId, "pdf");
     }
     setMessages([]);
     setError("");

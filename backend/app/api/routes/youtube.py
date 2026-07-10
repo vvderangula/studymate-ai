@@ -141,6 +141,17 @@ def chat_with_youtube(
             detail="Question must not be empty.",
         )
 
+    video_meta = YoutubeMetadataRepository().get(video_id)
+    if (
+        video_meta is not None
+        and video_meta.user_id is not None
+        and video_meta.user_id != current_user.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Video not found.",
+        )
+
     try:
         result = service.answer_with_citations(video_id, question)
     except PdfNotFoundError as exc:
@@ -160,7 +171,6 @@ def chat_with_youtube(
             detail=str(exc),
         ) from exc
 
-    video_meta = YoutubeMetadataRepository().get(video_id)
     ActivityRepository().log(
         current_user.id,
         "youtube_chat",

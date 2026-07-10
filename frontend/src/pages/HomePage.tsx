@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 
 import AIAssistant from "../components/AIAssistant";
 import PdfChat from "../components/PdfChat";
 import StudyTools from "../components/StudyTools";
 import YoutubeChat from "../components/YoutubeChat";
+import { useAuth } from "../context/AuthContext";
 
 const MODULES = [
   "Learn from PDF",
@@ -14,6 +16,25 @@ const MODULES = [
 
 type Module = (typeof MODULES)[number];
 
+const MODULE_INTRO: Record<Module, { title: string; subtitle: string }> = {
+  "Learn from PDF": {
+    title: "Learn from PDF",
+    subtitle: "Study and chat with your uploaded PDF documents.",
+  },
+  "Learn from YouTube": {
+    title: "Learn from YouTube",
+    subtitle: "Learn from YouTube videos with AI-powered conversations.",
+  },
+  "AI Study Tools": {
+    title: "AI Study Tools",
+    subtitle: "Generate quizzes and notes from your uploaded study materials.",
+  },
+  "AI Assistant": {
+    title: "AI Assistant",
+    subtitle: "General AI chat and research assistant.",
+  },
+};
+
 interface Message {
   id: number;
   role: "user" | "assistant";
@@ -22,9 +43,26 @@ interface Message {
 
 /** Landing page: full-width module tabs with a chat-style panel below. */
 export default function HomePage() {
+  const { user } = useAuth();
+  const location = useLocation();
   const [selected, setSelected] = useState<Module>(MODULES[0]);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+
+  useEffect(() => {
+    const state = location.state as { module?: Module } | null;
+    if (state?.module && MODULES.includes(state.module)) {
+      setSelected(state.module);
+      setMessages([]);
+      setInput("");
+    }
+  }, [location.state]);
+
+  useEffect(() => {
+    setSelected(MODULES[0]);
+    setMessages([]);
+    setInput("");
+  }, [user?.user_id]);
 
   function handleSelect(module: Module) {
     setSelected(module);
@@ -78,15 +116,40 @@ export default function HomePage() {
 
       {/* Module content */}
       <div className="mt-8">
-        {selected === "Learn from PDF" ? (
-          <PdfChat />
-        ) : selected === "Learn from YouTube" ? (
-          <YoutubeChat />
-        ) : selected === "AI Study Tools" ? (
-          <StudyTools />
-        ) : selected === "AI Assistant" ? (
-          <AIAssistant />
-        ) : (
+        <div className="mb-5">
+          <h2 className="text-xl font-semibold text-slate-800">{MODULE_INTRO[selected].title}</h2>
+          <p className="mt-1 text-sm text-slate-500">{MODULE_INTRO[selected].subtitle}</p>
+        </div>
+
+        <div
+          className={selected === "Learn from PDF" ? "" : "hidden"}
+          aria-hidden={selected !== "Learn from PDF"}
+        >
+          <PdfChat key={`pdf-${user?.user_id ?? "anon"}`} />
+        </div>
+
+        <div
+          className={selected === "Learn from YouTube" ? "" : "hidden"}
+          aria-hidden={selected !== "Learn from YouTube"}
+        >
+          <YoutubeChat key={`youtube-${user?.user_id ?? "anon"}`} />
+        </div>
+
+        <div
+          className={selected === "AI Study Tools" ? "" : "hidden"}
+          aria-hidden={selected !== "AI Study Tools"}
+        >
+          <StudyTools key={`tools-${user?.user_id ?? "anon"}`} />
+        </div>
+
+        <div
+          className={selected === "AI Assistant" ? "" : "hidden"}
+          aria-hidden={selected !== "AI Assistant"}
+        >
+          <AIAssistant key={`assistant-${user?.user_id ?? "anon"}`} />
+        </div>
+
+        {!MODULES.includes(selected) && (
           <PlaceholderChat
             module={selected}
             input={input}

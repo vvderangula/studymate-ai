@@ -27,6 +27,12 @@ const MODULE_NAV = [
   { label: "AI Assistant", module: "AI Assistant" },
 ] as const;
 
+const CONTINUE_TO_MODULE: Record<string, (typeof MODULE_NAV)[number]["module"]> = {
+  pdf: "Learn from PDF",
+  youtube: "Learn from YouTube",
+  research: "AI Assistant",
+};
+
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
@@ -123,7 +129,15 @@ export default function DashboardPage() {
           ) : (
             <ul className="space-y-3">
               {data.continue_learning.map((item) => (
-                <ContinueItemUI key={`${item.resource_type}-${item.resource_id}`} item={item} onNavigate={() => navigate("/learn")} />
+                <ContinueItemUI
+                  key={`${item.resource_type}-${item.resource_id}`}
+                  item={item}
+                  onNavigate={() =>
+                    navigate("/learn", {
+                      state: { module: CONTINUE_TO_MODULE[item.resource_type] ?? "Learn from PDF" },
+                    })
+                  }
+                />
               ))}
             </ul>
           )}
@@ -150,11 +164,11 @@ export default function DashboardPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="mb-4 text-base font-semibold text-slate-800">Quick Actions</h2>
           <div className="flex flex-col gap-2">
-            {MODULE_NAV.map(({ label }) => (
+            {MODULE_NAV.map(({ label, module }) => (
               <button
                 key={label}
                 type="button"
-                onClick={() => navigate("/learn")}
+                onClick={() => navigate("/learn", { state: { module } })}
                 className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:border-orange-300 hover:bg-orange-50 hover:text-orange-600"
               >
                 {label}

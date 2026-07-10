@@ -19,14 +19,29 @@ export interface StoredMessage {
 const CONVERSATION_PREFIX = "studymate:conversation:";
 const LAST_PDF_KEY = "studymate:last-pdf";
 
-function conversationKey(fileId: string): string {
-  return `${CONVERSATION_PREFIX}${fileId}`;
+function scopedConversationKey(scope: string, userId: string, resourceId: string): string {
+  return `${CONVERSATION_PREFIX}${scope}:${userId}:${resourceId}`;
+}
+
+function legacyConversationKey(resourceId: string): string {
+  return `${CONVERSATION_PREFIX}${resourceId}`;
+}
+
+function scopedLastPdfKey(userId: string): string {
+  return `${LAST_PDF_KEY}:${userId}`;
 }
 
 /** Return the stored conversation for a PDF, or an empty list. */
-export function loadConversation(fileId: string): StoredMessage[] {
+export function loadConversation(
+  fileId: string,
+  userId?: string,
+  scope: "pdf" | "youtube" = "pdf",
+): StoredMessage[] {
   try {
-    const raw = localStorage.getItem(conversationKey(fileId));
+    const key = userId
+      ? scopedConversationKey(scope, userId, fileId)
+      : legacyConversationKey(fileId);
+    const raw = localStorage.getItem(key);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as StoredMessage[]) : [];
@@ -36,36 +51,54 @@ export function loadConversation(fileId: string): StoredMessage[] {
 }
 
 /** Persist the conversation for a PDF. */
-export function saveConversation(fileId: string, messages: StoredMessage[]): void {
+export function saveConversation(
+  fileId: string,
+  messages: StoredMessage[],
+  userId?: string,
+  scope: "pdf" | "youtube" = "pdf",
+): void {
   try {
-    localStorage.setItem(conversationKey(fileId), JSON.stringify(messages));
+    const key = userId
+      ? scopedConversationKey(scope, userId, fileId)
+      : legacyConversationKey(fileId);
+    localStorage.setItem(
+      key,
+      JSON.stringify(messages),
+    );
   } catch {
     // Ignore storage quota or serialization errors; history is best-effort.
   }
 }
 
 /** Remove the stored conversation for a PDF. */
-export function clearConversation(fileId: string): void {
+export function clearConversation(
+  fileId: string,
+  userId?: string,
+  scope: "pdf" | "youtube" = "pdf",
+): void {
   try {
-    localStorage.removeItem(conversationKey(fileId));
+    const key = userId
+      ? scopedConversationKey(scope, userId, fileId)
+      : legacyConversationKey(fileId);
+    localStorage.removeItem(key);
   } catch {
     // Ignore storage errors.
   }
 }
 
 /** Return the id of the most recently active PDF, if any. */
-export function getLastPdfId(): string | null {
+export function getLastPdfId(userId?: string): string | null {
   try {
-    return localStorage.getItem(LAST_PDF_KEY);
+    return localStorage.getItem(userId ? scopedLastPdfKey(userId) : LAST_PDF_KEY);
   } catch {
     return null;
   }
 }
 
 /** Record the most recently active PDF so it can be resumed later. */
-export function setLastPdfId(fileId: string): void {
+export function setLastPdfId(fileId: string, userId?: string): void {
   try {
-    localStorage.setItem(LAST_PDF_KEY, fileId);
+    localStorage.setItem(userId ? scopedLastPdfKey(userId) : LAST_PDF_KEY, fileId);
   } catch {
     // Ignore storage errors.
   }
