@@ -46,6 +46,9 @@ export default function HomePage() {
   const { user } = useAuth();
   const location = useLocation();
   const [selected, setSelected] = useState<Module>(MODULES[0]);
+  const [mountedModules, setMountedModules] = useState<Set<Module>>(
+    () => new Set([MODULES[0]]),
+  );
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
 
@@ -53,6 +56,11 @@ export default function HomePage() {
     const state = location.state as { module?: Module } | null;
     if (state?.module && MODULES.includes(state.module)) {
       setSelected(state.module);
+      setMountedModules((prev) => {
+        const next = new Set(prev);
+        next.add(state.module as Module);
+        return next;
+      });
       setMessages([]);
       setInput("");
     }
@@ -60,12 +68,18 @@ export default function HomePage() {
 
   useEffect(() => {
     setSelected(MODULES[0]);
+    setMountedModules(new Set([MODULES[0]]));
     setMessages([]);
     setInput("");
   }, [user?.user_id]);
 
   function handleSelect(module: Module) {
     setSelected(module);
+    setMountedModules((prev) => {
+      const next = new Set(prev);
+      next.add(module);
+      return next;
+    });
     setMessages([]);
     setInput("");
   }
@@ -121,33 +135,41 @@ export default function HomePage() {
           <p className="mt-1 text-sm text-slate-500">{MODULE_INTRO[selected].subtitle}</p>
         </div>
 
-        <div
-          className={selected === "Learn from PDF" ? "" : "hidden"}
-          aria-hidden={selected !== "Learn from PDF"}
-        >
-          <PdfChat key={`pdf-${user?.user_id ?? "anon"}`} />
-        </div>
+        {mountedModules.has("Learn from PDF") && (
+          <div
+            className={selected === "Learn from PDF" ? "" : "hidden"}
+            aria-hidden={selected !== "Learn from PDF"}
+          >
+            <PdfChat key={`pdf-${user?.user_id ?? "anon"}`} />
+          </div>
+        )}
 
-        <div
-          className={selected === "Learn from YouTube" ? "" : "hidden"}
-          aria-hidden={selected !== "Learn from YouTube"}
-        >
-          <YoutubeChat key={`youtube-${user?.user_id ?? "anon"}`} />
-        </div>
+        {mountedModules.has("Learn from YouTube") && (
+          <div
+            className={selected === "Learn from YouTube" ? "" : "hidden"}
+            aria-hidden={selected !== "Learn from YouTube"}
+          >
+            <YoutubeChat key={`youtube-${user?.user_id ?? "anon"}`} />
+          </div>
+        )}
 
-        <div
-          className={selected === "AI Study Tools" ? "" : "hidden"}
-          aria-hidden={selected !== "AI Study Tools"}
-        >
-          <StudyTools key={`tools-${user?.user_id ?? "anon"}`} />
-        </div>
+        {mountedModules.has("AI Study Tools") && (
+          <div
+            className={selected === "AI Study Tools" ? "" : "hidden"}
+            aria-hidden={selected !== "AI Study Tools"}
+          >
+            <StudyTools key={`tools-${user?.user_id ?? "anon"}`} />
+          </div>
+        )}
 
-        <div
-          className={selected === "AI Assistant" ? "" : "hidden"}
-          aria-hidden={selected !== "AI Assistant"}
-        >
-          <AIAssistant key={`assistant-${user?.user_id ?? "anon"}`} />
-        </div>
+        {mountedModules.has("AI Assistant") && (
+          <div
+            className={selected === "AI Assistant" ? "" : "hidden"}
+            aria-hidden={selected !== "AI Assistant"}
+          >
+            <AIAssistant key={`assistant-${user?.user_id ?? "anon"}`} />
+          </div>
+        )}
 
         {!MODULES.includes(selected) && (
           <PlaceholderChat

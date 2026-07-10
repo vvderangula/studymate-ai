@@ -57,7 +57,13 @@ export default function AIAssistant() {
         </div>
       </div>
 
-      {tab === "general" ? <GeneralChat /> : <AcademicSearch />}
+      <div className={tab === "general" ? "" : "hidden"} aria-hidden={tab !== "general"}>
+        <GeneralChat />
+      </div>
+
+      <div className={tab === "research" ? "" : "hidden"} aria-hidden={tab !== "research"}>
+        <AcademicSearch />
+      </div>
     </div>
   );
 }
