@@ -38,7 +38,7 @@ class YoutubeMetadataRepository:
                     title = excluded.title,
                     duration = excluded.duration,
                     thumbnail = excluded.thumbnail,
-                    user_id = COALESCE(youtube_videos.user_id, excluded.user_id),
+                    user_id = excluded.user_id,
                     processing_status = excluded.processing_status,
                     processed_at = excluded.processed_at,
                     chunk_count = excluded.chunk_count

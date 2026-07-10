@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 
 import AIAssistant from "../components/AIAssistant";
@@ -51,6 +51,7 @@ export default function HomePage() {
   );
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  const previousUserId = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     const state = location.state as { module?: Module } | null;
@@ -67,10 +68,20 @@ export default function HomePage() {
   }, [location.state]);
 
   useEffect(() => {
-    setSelected(MODULES[0]);
-    setMountedModules(new Set([MODULES[0]]));
-    setMessages([]);
-    setInput("");
+    const currentUserId = user?.user_id ?? null;
+    // Skip the initial mount so navigation state (a requested module) is
+    // honored; only reset when the authenticated user actually changes.
+    if (previousUserId.current === undefined) {
+      previousUserId.current = currentUserId;
+      return;
+    }
+    if (previousUserId.current !== currentUserId) {
+      previousUserId.current = currentUserId;
+      setSelected(MODULES[0]);
+      setMountedModules(new Set([MODULES[0]]));
+      setMessages([]);
+      setInput("");
+    }
   }, [user?.user_id]);
 
   function handleSelect(module: Module) {

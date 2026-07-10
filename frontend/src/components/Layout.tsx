@@ -21,12 +21,12 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-y-2 px-4 py-3 sm:flex-nowrap sm:px-6 sm:py-4">
           <Link to="/" className="text-xl font-bold text-orange-500">
             StudyMate AI
           </Link>
 
-          <nav className="flex items-center gap-1">
+          <nav className="order-last flex w-full items-center justify-center gap-1 sm:order-none sm:w-auto sm:justify-start">
             {NAV_LINKS.map(({ to, label, end }) => (
               <NavLink
                 key={to}
@@ -61,7 +61,7 @@ export default function Layout() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-10">
+      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
         <Outlet />
       </main>
     </div>

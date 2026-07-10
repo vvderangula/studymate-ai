@@ -35,7 +35,7 @@ export default function AIAssistant() {
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
           Mode
         </p>
-        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1">
+        <div className="inline-flex w-full rounded-lg border border-slate-200 bg-slate-100 p-1 sm:w-auto">
           {(["general", "research"] as Tab[]).map((name) => {
             const isActive = tab === name;
             return (
@@ -44,7 +44,7 @@ export default function AIAssistant() {
                 type="button"
                 onClick={() => setTab(name)}
                 className={
-                  "rounded-md px-5 py-2 text-sm font-medium transition-colors " +
+                  "flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors sm:flex-none sm:px-5 " +
                   (isActive
                     ? "bg-white text-orange-600 shadow-sm"
                     : "text-slate-500 hover:text-slate-700")
