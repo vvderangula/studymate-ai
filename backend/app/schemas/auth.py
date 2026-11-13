@@ -43,9 +43,11 @@ class TokenResponse(BaseModel):
     user_id: str
     full_name: str
     email: str
+    role: str = "user"  # "admin" | "user"
 
 
 class UserResponse(BaseModel):
     id: str
     full_name: str
     email: str
+    role: str = "user"  # "admin" | "user"

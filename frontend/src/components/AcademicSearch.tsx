@@ -1,30 +1,36 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError } from "../api/client";
 import { useChatScroll } from "../hooks/useChatScroll";
 import {
   askPaper,
+  deleteSavedPaper,
+  deleteSearch,
+  getSavedPaper,
+  getSearch,
+  listSavedPapers,
+  listSearches,
   searchPapers,
   summarizePaper,
   type PaperItem,
+  type SavedPaperItem,
+  type SearchHistoryItem,
 } from "../api/academic";
+import { timeAgo } from "../lib/time";
+import HistoryList from "./HistoryList";
+import { IconSearch } from "./icons";
+import { EmptyNote, ErrorNotice, ProgressNotice, TypingIndicator } from "./ui";
+import { AsideCard, Workspace } from "./workspace";
+import Markdown from "./Markdown";
 
 type SearchStage = "idle" | "searching";
 type SummaryStage = "idle" | "loading" | "done";
 type AskStage = "idle" | "loading";
 
 interface QAMessage {
-  id: number;
+  id: string;
   role: "user" | "assistant";
   text: string;
-}
-
-/** Per-paper state snapshot stored when switching away from a paper. */
-interface PaperState {
-  messages: QAMessage[];
-  summary: string;
-  summaryStage: SummaryStage;
-  summaryError: string;
 }
 
 function friendlyError(err: unknown, fallback: string): string {
@@ -40,15 +46,24 @@ function friendlyError(err: unknown, fallback: string): string {
   return "Network error. Please check your connection.";
 }
 
-/** AI Academic Search: search papers, read summaries, ask questions. */
+/**
+ * AI Academic Search: search papers, read summaries, ask questions.
+ * Searches, summaries and Q&A are saved on the server and listed on the left.
+ */
 export default function AcademicSearch() {
   const [query, setQuery] = useState("");
   const [searchStage, setSearchStage] = useState<SearchStage>("idle");
   const [searchError, setSearchError] = useState("");
   const [papers, setPapers] = useState<PaperItem[]>([]);
   const [searchedQuery, setSearchedQuery] = useState("");
+  const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
+
+  const [searches, setSearches] = useState<SearchHistoryItem[]>([]);
+  const [savedPapers, setSavedPapers] = useState<SavedPaperItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
 
   const [selectedPaper, setSelectedPaper] = useState<PaperItem | null>(null);
+  const [paperLoading, setPaperLoading] = useState(false);
   const [summaryStage, setSummaryStage] = useState<SummaryStage>("idle");
   const [summaryError, setSummaryError] = useState("");
   const [summary, setSummary] = useState("");
@@ -58,9 +73,8 @@ export default function AcademicSearch() {
   const [askError, setAskError] = useState("");
   const [messages, setMessages] = useState<QAMessage[]>([]);
 
-  /** Per-paper conversation/summary cache. Keyed by paper_id. */
-  const paperCache = useRef<Map<string, PaperState>>(new Map());
-
+  /** The paper most recently opened; late responses for others are ignored. */
+  const openingRef = useRef<string | null>(null);
   /** Scrolls to the bottom of the Q&A chat when messages or loading state changes. */
   const endRef = useChatScroll([messages, askStage]);
   /** Used to scroll the detail panel into view when a paper is selected. */
@@ -68,14 +82,31 @@ export default function AcademicSearch() {
   /** Focused when a paper is selected so the user can type immediately. */
   const askInputRef = useRef<HTMLTextAreaElement>(null);
 
-  async function handleSearch() {
-    const q = query.trim();
-    if (!q) return;
-    setSearchStage("searching");
-    setSearchError("");
-    setPapers([]);
-    // Save current paper state before clearing it
-    _saveCurrentPaperState();
+  function refreshSavedPapers() {
+    listSavedPapers()
+      .then(setSavedPapers)
+      .catch(() => undefined);
+  }
+
+  useEffect(() => {
+    let live = true;
+    Promise.all([listSearches(), listSavedPapers()])
+      .then(([searchItems, paperItems]) => {
+        if (!live) return;
+        setSearches(searchItems);
+        setSavedPapers(paperItems);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (live) setHistoryLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  function clearSelection() {
+    openingRef.current = null;
     setSelectedPaper(null);
     setSummary("");
     setSummaryStage("idle");
@@ -83,11 +114,30 @@ export default function AcademicSearch() {
     setMessages([]);
     setAskInput("");
     setAskError("");
+  }
+
+  async function handleSearch() {
+    const q = query.trim();
+    if (!q) return;
+    setSearchStage("searching");
+    setSearchError("");
+    setPapers([]);
+    clearSelection();
 
     try {
       const result = await searchPapers(q, 10);
       setPapers(result.papers);
       setSearchedQuery(result.query);
+      setActiveSearchId(result.search_id ?? null);
+      if (result.search_id) {
+        const entry: SearchHistoryItem = {
+          id: result.search_id,
+          query: result.query,
+          result_count: result.papers.length,
+          created_at: result.created_at ?? new Date().toISOString(),
+        };
+        setSearches((prev) => [entry, ...prev]);
+      }
     } catch (err) {
       setSearchError(friendlyError(err, "Search failed. Please try again."));
     } finally {
@@ -95,106 +145,118 @@ export default function AcademicSearch() {
     }
   }
 
-  /** Persist the active paper's UI state into the cache. */
-  function _saveCurrentPaperState() {
-    if (!selectedPaper) return;
-    paperCache.current.set(selectedPaper.paper_id, {
-      messages,
-      summary,
-      summaryStage,
-      summaryError,
-    });
+  /** Reopen a past search with its saved results (no new lookup). */
+  async function openSearch(id: string) {
+    setSearchError("");
+    clearSelection();
+    try {
+      const result = await getSearch(id);
+      setPapers(result.papers);
+      setSearchedQuery(result.query);
+      setQuery(result.query);
+      setActiveSearchId(id);
+    } catch (err) {
+      setSearchError(friendlyError(err, "Could not open that search."));
+    }
   }
 
-  function handleSelectPaper(paper: PaperItem) {
-    // Persist current paper before switching
-    _saveCurrentPaperState();
-
-    setSelectedPaper(paper);
-    setAskInput("");
-    setAskError("");
-
-    // Restore cached state for the newly selected paper, or use fresh defaults
-    const cached = paperCache.current.get(paper.paper_id);
-    if (cached) {
-      setMessages(cached.messages);
-      setSummary(cached.summary);
-      setSummaryStage(cached.summaryStage);
-      setSummaryError(cached.summaryError);
-    } else {
-      setMessages([]);
-      setSummary("");
-      setSummaryStage("idle");
-      setSummaryError("");
+  async function removeSearch(id: string) {
+    try {
+      await deleteSearch(id);
+      setSearches((prev) => prev.filter((item) => item.id !== id));
+      if (activeSearchId === id) setActiveSearchId(null);
+    } catch (err) {
+      setSearchError(friendlyError(err, "Could not delete that search."));
     }
+  }
 
-    // Scroll detail panel into view and focus the ask input
+  async function removeSavedPaper(paperId: string) {
+    try {
+      await deleteSavedPaper(paperId);
+      setSavedPapers((prev) => prev.filter((item) => item.paper.paper_id !== paperId));
+      if (selectedPaper?.paper_id === paperId) clearSelection();
+    } catch (err) {
+      setSearchError(friendlyError(err, "Could not remove that paper."));
+    }
+  }
+
+  async function handleSelectPaper(paper: PaperItem) {
+    clearSelection();
+    openingRef.current = paper.paper_id;
+    setSelectedPaper(paper);
+    setPaperLoading(true);
+
+    // On phones the detail pane sits below the results, so bring it into
+    // view. On desktop it is already beside them; scrolling would shift the
+    // fixed layout.
     setTimeout(() => {
-      detailRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
-      askInputRef.current?.focus();
+      const stacked = window.matchMedia?.("(max-width: 1023px)").matches ?? false;
+      if (stacked) {
+        detailRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+      }
+      askInputRef.current?.focus({ preventScroll: true });
     }, 50);
+
+    // Restore anything saved about this paper (summary, Q&A).
+    try {
+      const saved = await getSavedPaper(paper.paper_id);
+      if (openingRef.current !== paper.paper_id) return;
+      if (saved.summary) {
+        setSummary(saved.summary);
+        setSummaryStage("done");
+      }
+      setMessages(saved.messages.map((m) => ({ id: m.id, role: m.role, text: m.text })));
+    } catch (err) {
+      // 404 just means this paper has nothing saved yet.
+      if (!(err instanceof ApiError && err.status === 404) && openingRef.current === paper.paper_id) {
+        setAskError(friendlyError(err, "Could not load what you saved for this paper."));
+      }
+    } finally {
+      if (openingRef.current === paper.paper_id) setPaperLoading(false);
+    }
   }
 
   async function handleSummarize() {
     if (!selectedPaper) return;
+    const paperId = selectedPaper.paper_id;
     setSummaryStage("loading");
     setSummaryError("");
     setSummary("");
 
     try {
       const result = await summarizePaper(selectedPaper);
+      if (openingRef.current !== paperId) return;
       setSummary(result.summary);
       setSummaryStage("done");
-      // Persist the generated summary for this paper
-      paperCache.current.set(selectedPaper.paper_id, {
-        messages,
-        summary: result.summary,
-        summaryStage: "done",
-        summaryError: "",
-      });
+      refreshSavedPapers();
     } catch (err) {
-      const errMsg = friendlyError(err, "Summary generation failed.");
-      setSummaryError(errMsg);
+      if (openingRef.current !== paperId) return;
+      setSummaryError(friendlyError(err, "Summary generation failed."));
       setSummaryStage("idle");
-      paperCache.current.set(selectedPaper.paper_id, {
-        messages,
-        summary: "",
-        summaryStage: "idle",
-        summaryError: errMsg,
-      });
     }
   }
 
   async function handleAsk() {
     if (!selectedPaper || !askInput.trim() || askStage !== "idle") return;
+    const paperId = selectedPaper.paper_id;
     const question = askInput.trim();
     setAskInput("");
     setAskError("");
-
-    const userMsg: QAMessage = { id: Date.now(), role: "user", text: question };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [...prev, { id: `local-${Date.now()}`, role: "user", text: question }]);
     setAskStage("loading");
 
     try {
       const result = await askPaper(selectedPaper, question);
-      const assistantMsg: QAMessage = {
-        id: Date.now() + 1,
-        role: "assistant",
-        text: result.answer,
-      };
-      setMessages((prev) => {
-        const next = [...prev, assistantMsg];
-        // Keep cache in sync so switching away preserves the full conversation
-        paperCache.current.set(selectedPaper.paper_id, {
-          messages: next,
-          summary,
-          summaryStage,
-          summaryError,
-        });
-        return next;
-      });
+      if (openingRef.current !== paperId) return;
+      setMessages((prev) => [
+        ...prev,
+        { id: `local-${Date.now()}-a`, role: "assistant", text: result.answer },
+      ]);
+      refreshSavedPapers();
     } catch (err) {
-      setAskError(friendlyError(err, "Failed to get an answer."));
+      if (openingRef.current === paperId) {
+        setAskError(friendlyError(err, "Failed to get an answer."));
+      }
     } finally {
       setAskStage("idle");
     }
@@ -203,251 +265,277 @@ export default function AcademicSearch() {
   const searching = searchStage === "searching";
 
   return (
-    <div className="space-y-4 sm:space-y-5">
-      {/* Search box */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <label
-          htmlFor="academic-query"
-          className="mb-2 block text-sm font-medium text-slate-700"
-        >
-          Search academic papers
-        </label>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <input
-            id="academic-query"
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void handleSearch();
-              }
-            }}
-            disabled={searching}
-            placeholder="e.g. transformer attention mechanism"
-            aria-label="Search query"
-            className="flex-1 rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
-          />
-          <button
-            type="button"
-            onClick={() => void handleSearch()}
-            disabled={searching || !query.trim()}
-            className="rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
-          >
-            {searching ? "Searching…" : "Search"}
-          </button>
-        </div>
-
-        {searchError && (
-          <p className="mt-3 text-sm text-red-600" role="alert">
-            {searchError}
-          </p>
-        )}
-      </div>
-
-      {/* Results list */}
-      {papers.length > 0 && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">
-            Results for "{searchedQuery}"
-            <span className="ml-2 font-normal text-slate-400">
-              {papers.length} paper{papers.length !== 1 ? "s" : ""}
-            </span>
-          </h2>
-          <ul className="space-y-3">
-            {papers.map((paper) => {
-              const isSelected = selectedPaper?.paper_id === paper.paper_id;
-              return (
-                <li key={paper.paper_id}>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectPaper(paper)}
-                    className={
-                      "w-full rounded-lg border p-4 text-left transition-colors " +
-                      (isSelected
-                        ? "border-orange-400 bg-orange-50"
-                        : "border-slate-200 hover:border-orange-300 hover:bg-slate-50")
-                    }
-                  >
-                    <p className="text-sm font-medium text-slate-800 leading-snug">
-                      {paper.title}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {paper.authors.slice(0, 3).join(", ")}
-                      {paper.authors.length > 3 ? " et al." : ""}
-                      {paper.year ? ` · ${paper.year}` : ""}
-                    </p>
-                    {paper.abstract && (
-                      <p className="mt-2 line-clamp-2 text-xs text-slate-600 leading-relaxed">
-                        {paper.abstract}
-                      </p>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-
-      {/* Paper detail panel */}
-      {selectedPaper && (
-        <div ref={detailRef} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          {/* Header */}
-          <div className="mb-4">
-            <h2 className="text-base font-semibold text-slate-800 leading-snug">
-              {selectedPaper.title}
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              {selectedPaper.authors.join(", ")}
-              {selectedPaper.year ? ` · ${selectedPaper.year}` : ""}
-            </p>
-            {selectedPaper.pdf_url && (
-              <a
-                href={selectedPaper.pdf_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-block text-xs font-medium text-orange-500 underline underline-offset-2 hover:text-orange-600"
-              >
-                View PDF ↗
-              </a>
-            )}
-          </div>
-
-          {/* Abstract */}
-          {selectedPaper.abstract && (
-            <div className="mb-4 rounded-lg bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Abstract
-              </p>
-              <p className="mt-2 text-sm text-slate-700 leading-relaxed">
-                {selectedPaper.abstract}
-              </p>
+    <Workspace
+      aside={
+        <>
+          <AsideCard>
+            <label htmlFor="academic-query" className="field-label">
+              Search academic papers
+            </label>
+            <div className="relative">
+              <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
+              <input
+                id="academic-query"
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleSearch();
+                  }
+                }}
+                disabled={searching}
+                placeholder="e.g. transformer attention mechanism"
+                aria-label="Search query"
+                className="field pl-9"
+              />
             </div>
-          )}
-
-          {/* Summarize button */}
-          {summaryStage === "idle" && (
             <button
               type="button"
-              onClick={() => void handleSummarize()}
-              className="rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
+              onClick={() => void handleSearch()}
+              disabled={searching || !query.trim()}
+              className="btn-primary mt-3 w-full"
             >
-              Generate AI Summary
+              {searching && <span className="spinner" aria-hidden="true" />}
+              {searching ? "Searching…" : "Search"}
             </button>
-          )}
+            {searchError && <ErrorNotice className="mt-3">{searchError}</ErrorNotice>}
+          </AsideCard>
 
-          {summaryStage === "loading" && (
-            <p className="text-sm text-slate-500" role="status">
-              Generating summary…
-            </p>
-          )}
-
-          {summaryError && (
-            <p className="text-sm text-red-600" role="alert">
-              {summaryError}
-            </p>
-          )}
-
-          {/* Summary output */}
-          {summaryStage === "done" && summary && (
-            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                AI Summary
-              </p>
-              <pre className="whitespace-pre-wrap text-sm text-slate-700 leading-relaxed font-sans">
-                {summary}
-              </pre>
+          {searching && (
+            <div className="card space-y-4 p-4" aria-hidden="true">
+              {[0, 1, 2].map((row) => (
+                <div key={row} className="space-y-2">
+                  <div className="skeleton h-4 w-5/6" />
+                  <div className="skeleton h-3 w-1/2" />
+                </div>
+              ))}
             </div>
           )}
 
-          {/* Q&A section */}
-          <div className="mt-6">
-            <h3 className="mb-3 text-sm font-semibold text-slate-700">
-              Ask a question about this paper
-            </h3>
-
-            {/* Conversation */}
-            {messages.length > 0 && (
-              <div
-                className="mb-4 max-h-64 space-y-3 overflow-y-auto pr-1"
-                role="log"
-                aria-live="polite"
-                aria-label="Paper Q&A conversation"
-              >
-                {messages.map((message) => {
-                  const isUser = message.role === "user";
+          {papers.length > 0 && (
+            // Fills the space under the search box; only the list scrolls.
+            <div className="card flex flex-col overflow-hidden lg:min-h-48 lg:flex-1 lg:!shrink">
+              <h2 className="flex shrink-0 items-baseline justify-between gap-3 border-b border-line px-4 py-3 text-sm font-semibold text-ink">
+                <span className="min-w-0 truncate">Results for "{searchedQuery}"</span>
+                <span className="shrink-0 text-xs font-normal text-muted">
+                  {papers.length} paper{papers.length !== 1 ? "s" : ""}
+                </span>
+              </h2>
+              <ul className="space-y-1 overscroll-contain p-2 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+                {papers.map((paper) => {
+                  const isSelected = selectedPaper?.paper_id === paper.paper_id;
                   return (
-                    <div
-                      key={message.id}
-                      className={isUser ? "flex justify-end" : "flex justify-start"}
-                    >
-                      <div
+                    <li key={paper.paper_id}>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectPaper(paper)}
+                        aria-pressed={isSelected}
                         className={
-                          "max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2 text-sm leading-relaxed " +
-                          (isUser
-                            ? "bg-orange-500 text-white"
-                            : "bg-slate-100 text-slate-800")
+                          "w-full rounded-panel px-3 py-3 text-left transition-[background-color,box-shadow] duration-150 " +
+                          (isSelected
+                            ? "bg-gradient-to-br from-accent-soft to-accent-tint/60 ring-1 ring-inset ring-accent-line"
+                            : "hover:bg-sunken/70")
                         }
                       >
-                        {message.text}
-                      </div>
-                    </div>
+                        <p
+                          className={
+                            "line-clamp-2 text-sm font-medium leading-5 " +
+                            (isSelected ? "text-accent-ink" : "text-ink")
+                          }
+                        >
+                          {paper.title}
+                        </p>
+                        <p className="mt-1 truncate text-xs text-muted">
+                          {paper.authors.slice(0, 3).join(", ")}
+                          {paper.authors.length > 3 ? " et al." : ""}
+                          {paper.year ? `, ${paper.year}` : ""}
+                        </p>
+                      </button>
+                    </li>
                   );
                 })}
+              </ul>
+            </div>
+          )}
 
-                {askStage === "loading" && (
-                  <div
-                    className="mr-auto max-w-[85%] rounded-2xl bg-slate-100 px-4 py-2 text-sm text-slate-500"
-                    role="status"
+          <HistoryList
+            title="Recent searches"
+            loading={historyLoading}
+            items={searches.map((item) => ({
+              id: item.id,
+              title: item.query,
+              subtitle: `${item.result_count} paper${item.result_count === 1 ? "" : "s"}`,
+              meta: timeAgo(item.created_at),
+            }))}
+            selectedId={activeSearchId}
+            emptyText="Your searches are saved here."
+            onSelect={(id) => void openSearch(id)}
+            onDelete={(id) => void removeSearch(id)}
+          />
+
+          <HistoryList
+            title="Saved papers"
+            loading={historyLoading}
+            items={savedPapers.map((item) => ({
+              id: item.paper.paper_id,
+              title: item.paper.title,
+              subtitle: [
+                item.has_summary ? "Summary" : "",
+                item.message_count > 0 ? `${item.message_count} messages` : "",
+              ]
+                .filter(Boolean)
+                .join(", "),
+              meta: timeAgo(item.updated_at),
+            }))}
+            selectedId={selectedPaper?.paper_id ?? null}
+            emptyText="Papers you summarise or ask about are saved here."
+            onSelect={(id) => {
+              const item = savedPapers.find((entry) => entry.paper.paper_id === id);
+              if (item) void handleSelectPaper(item.paper);
+            }}
+            onDelete={(id) => void removeSavedPaper(id)}
+          />
+        </>
+      }
+    >
+      <div ref={detailRef} className="pane scroll-mt-4">
+        {!selectedPaper ? (
+          <div className="pane-scroll flex">
+            <EmptyNote>
+              Search for a topic, then pick a paper to read its abstract, get an AI summary
+              and ask questions about it.
+            </EmptyNote>
+          </div>
+        ) : (
+          <>
+            <div className="pane-scroll">
+              <div className="mx-auto w-full max-w-reading px-4 py-6 sm:px-6">
+                <h2 className="text-lg font-semibold leading-7 tracking-[-0.015em] text-ink">
+                  {selectedPaper.title}
+                </h2>
+                <p className="mt-1 text-sm text-muted">
+                  {selectedPaper.authors.join(", ")}
+                  {selectedPaper.year ? `, ${selectedPaper.year}` : ""}
+                </p>
+                {selectedPaper.pdf_url && (
+                  <a
+                    href={selectedPaper.pdf_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="link mt-2 inline-block text-sm"
                   >
-                    <span className="inline-flex items-center gap-2">
-                      <span className="h-2 w-2 animate-pulse rounded-full bg-orange-400" />
-                      Generating answer…
-                    </span>
+                    View PDF
+                  </a>
+                )}
+
+                {selectedPaper.abstract && (
+                  <div className="mt-6 rounded-panel bg-canvas p-4">
+                    <p className="text-[13px] font-medium text-muted">Abstract</p>
+                    <p className="mt-2 text-sm leading-6 text-ink-soft">
+                      {selectedPaper.abstract}
+                    </p>
                   </div>
                 )}
 
-                <div ref={endRef} />
+                <div className="mt-4 space-y-3">
+                  {paperLoading && <ProgressNotice>Loading what you saved…</ProgressNotice>}
+                  {!paperLoading && summaryStage === "idle" && (
+                    <button
+                      type="button"
+                      onClick={() => void handleSummarize()}
+                      className="btn-secondary"
+                    >
+                      Generate AI Summary
+                    </button>
+                  )}
+                  {summaryStage === "loading" && (
+                    <ProgressNotice>Generating summary…</ProgressNotice>
+                  )}
+                  {summaryError && <ErrorNotice>{summaryError}</ErrorNotice>}
+                  {summaryStage === "done" && summary && (
+                    <div className="rounded-panel border border-accent-line bg-accent-soft p-4">
+                      <p className="text-[13px] font-medium text-accent-ink">AI Summary</p>
+                      <div className="mt-2">
+                        <Markdown>{summary}</Markdown>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-8 border-t border-line pt-6">
+                  <h3 className="text-sm font-semibold text-ink">
+                    Ask a question about this paper
+                  </h3>
+                  <div
+                    className="mt-4 flex flex-col gap-4"
+                    role="log"
+                    aria-live="polite"
+                    aria-label="Paper Q&A conversation"
+                  >
+                    {messages.length === 0 && askStage !== "loading" && (
+                      <p className="text-sm text-muted">
+                        Questions and answers about this paper appear here.
+                      </p>
+                    )}
+                    {messages.map((message) => {
+                      const isUser = message.role === "user";
+                      return (
+                        <div
+                          key={message.id}
+                          className={isUser ? "flex justify-end" : "flex justify-start"}
+                        >
+                          <div className={isUser ? "bubble-user" : "bubble-assistant"}>
+                            {isUser ? message.text : <Markdown>{message.text}</Markdown>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {askStage === "loading" && (
+                      <TypingIndicator>Generating answer…</TypingIndicator>
+                    )}
+                    <div ref={endRef} />
+                  </div>
+                </div>
               </div>
-            )}
-
-            {askError && (
-              <p className="mb-2 text-sm text-red-600" role="alert">
-                {askError}
-              </p>
-            )}
-
-            <div className="flex items-end gap-2">
-              <textarea
-                ref={askInputRef}
-                value={askInput}
-                onChange={(e) => setAskInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void handleAsk();
-                  }
-                }}
-                disabled={askStage === "loading"}
-                rows={1}
-                placeholder="Ask something about this paper…  (Enter to send)"
-                aria-label="Ask a question about this paper"
-                className="max-h-32 min-h-[2.75rem] flex-1 resize-y rounded-lg border border-slate-300 px-4 py-2.5 text-sm leading-relaxed outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
-              />
-              <button
-                type="button"
-                onClick={() => void handleAsk()}
-                disabled={askStage === "loading" || !askInput.trim()}
-                className="rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
-              >
-                {askStage === "loading" ? "…" : "Ask"}
-              </button>
             </div>
-          </div>
-        </div>
-      )}
-    </div>
+
+            <div className="pane-foot">
+              <div className="mx-auto w-full max-w-reading">
+                {askError && <ErrorNotice className="mb-3">{askError}</ErrorNotice>}
+                <div className="composer">
+                  <textarea
+                    ref={askInputRef}
+                    value={askInput}
+                    onChange={(e) => setAskInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void handleAsk();
+                      }
+                    }}
+                    disabled={askStage === "loading"}
+                    rows={1}
+                    placeholder="Ask something about this paper…"
+                    aria-label="Ask a question about this paper"
+                    className="composer-input"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleAsk()}
+                    disabled={askStage === "loading" || !askInput.trim()}
+                    className="composer-send"
+                  >
+                    {askStage === "loading" && <span className="spinner" aria-hidden="true" />}
+                    Ask
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </Workspace>
   );
 }

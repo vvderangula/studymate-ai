@@ -5,19 +5,25 @@ import logging
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from app.core.auth import get_current_user
+from app.models.conversation import KIND_PDF
+from app.models.pdf import PdfMetadata
 from app.models.user import User
 from app.repositories.activity_repository import ActivityRepository
+from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.pdf_repository import PdfMetadataRepository
+from app.schemas.history import MessageOut, MessagesResponse
 from app.schemas.pdf import (
     ChatRequest,
     ChatResponse,
     Citation,
+    DocumentItem,
+    DocumentsResponse,
     ProcessResponse,
     UploadResponse,
 )
-from app.services.chunk_storage import ChunkStorageService
-from app.services.embeddings import EmbeddingError, HuggingFaceEmbeddingService
-from app.services.llm import HuggingFaceLLMService, LLMError
+from app.repositories.chunk_repository import ChunkRepository
+from app.services.embeddings import EmbeddingError, create_embedding_service
+from app.services.llm import LLMError, create_llm_service
 from app.services.pdf_embedding_service import PdfEmbeddingService
 from app.services.pdf_extractor import PDFExtractor
 from app.services.pdf_processing_service import (
@@ -42,9 +48,9 @@ logger = logging.getLogger(__name__)
 
 _storage = PDFStorageService()
 _extractor = PDFExtractor()
-_chunk_storage = ChunkStorageService()
+_chunk_storage = ChunkRepository()
 
-_embeddings = HuggingFaceEmbeddingService()
+_embeddings = create_embedding_service()
 _chroma = ChromaService()
 _pdf_embedder = PdfEmbeddingService(
     _storage, _extractor, _chunk_storage, _embeddings, _chroma
@@ -66,10 +72,16 @@ def get_processing_service() -> ProcessingService:
             storage=PDFStorageService(),
             extractor=PDFExtractor(),
             chunker=TextChunker(),
-            chunk_storage=ChunkStorageService(),
+            chunk_storage=ChunkRepository(),
             repository=PdfMetadataRepository(),
         )
     )
+
+
+def get_pdf_indexer() -> PdfEmbeddingService:
+    """Provide the shared PDF embedder (overridable in tests)."""
+
+    return _pdf_embedder
 
 
 def get_rag_service() -> RAGService:
@@ -82,7 +94,7 @@ def get_rag_service() -> RAGService:
     return RAGService(
         retriever=_retriever,
         prompt_builder=PromptBuilder(),
-        llm=HuggingFaceLLMService(),
+        llm=create_llm_service(),
         indexer=_pdf_embedder,
         repository=PdfMetadataRepository(),
     )
@@ -136,6 +148,7 @@ def upload_pdf(
 def process_pdf(
     file_id: str,
     service: ProcessingService = Depends(get_processing_service),
+    indexer: PdfEmbeddingService = Depends(get_pdf_indexer),
     current_user: User = Depends(get_current_user),
 ) -> ProcessResponse:
     """Process a stored PDF into clean, chunked text.
@@ -148,7 +161,7 @@ def process_pdf(
 
     # Ownership: only process if the PDF belongs to the current user.
     pdf = PdfMetadataRepository().get(file_id)
-    if pdf is None or (pdf.user_id is not None and pdf.user_id != current_user.id):
+    if pdf is None or pdf.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="PDF not found.",
@@ -164,8 +177,19 @@ def process_pdf(
     except ProcessingError as exc:
         logger.warning("Processing failed for %s: %s", file_id, exc)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
+        ) from exc
+
+    # Embed now, so the first question does not wait on (or time out in)
+    # embedding the whole document.
+    try:
+        indexer.reindex(file_id)
+    except EmbeddingError as exc:
+        logger.error("Indexing failed for %s: %s", file_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"The PDF was read, but indexing failed: {exc} Try processing it again.",
         ) from exc
 
     return ProcessResponse(
@@ -203,7 +227,7 @@ def chat_with_pdf(
     # Ownership: if the PDF exists and belongs to another user, deny.
     # Unknown file_ids are handled by the RAG service (returns 404).
     pdf = PdfMetadataRepository().get(file_id)
-    if pdf is not None and pdf.user_id is not None and pdf.user_id != current_user.id:
+    if pdf is not None and pdf.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied.",
@@ -218,7 +242,7 @@ def chat_with_pdf(
         ) from exc
     except PdfNotProcessedError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
     except (EmbeddingError, LLMError) as exc:
@@ -228,6 +252,26 @@ def chat_with_pdf(
             detail=str(exc),
         ) from exc
 
+    # Keep the exchange so the conversation can be reopened later.
+    conversations = ConversationRepository()
+    conversation = conversations.get_or_create_for_source(
+        current_user.id, KIND_PDF, file_id, pdf.original_name if pdf else "PDF"
+    )
+    conversations.add_message(conversation, "user", question)
+    conversations.add_message(
+        conversation,
+        "assistant",
+        result.answer,
+        [
+            {
+                "page": citation.page,
+                "chunk_id": citation.chunk_id,
+                "source_reference": citation.source_reference,
+            }
+            for citation in result.citations
+        ],
+    )
+
     ActivityRepository().log(
         current_user.id,
         "pdf_chat",
@@ -235,6 +279,7 @@ def chat_with_pdf(
         resource_title=pdf.original_name if pdf is not None else None,
     )
     return ChatResponse(
+        conversation_id=conversation.id,
         answer=result.answer,
         citations=[
             Citation(
@@ -246,3 +291,86 @@ def chat_with_pdf(
         ],
         metadata=result.metadata,
     )
+
+
+def _owned_pdf(file_id: str, user: User) -> PdfMetadata:
+    """The PDF if ``user`` owns it, otherwise a 404."""
+
+    pdf = PdfMetadataRepository().get(file_id)
+    if pdf is None or pdf.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found.")
+    return pdf
+
+
+@router.get("/documents", response_model=DocumentsResponse)
+def list_documents(current_user: User = Depends(get_current_user)) -> DocumentsResponse:
+    """Every PDF the user uploaded, with chat counts, most recently active first."""
+
+    conversations = {
+        conversation.source_id: conversation
+        for conversation in ConversationRepository().list(current_user.id, KIND_PDF, limit=500)
+    }
+    items = []
+    for pdf in PdfMetadataRepository().list_all_by_user(current_user.id):
+        conversation = conversations.get(pdf.id)
+        items.append(
+            DocumentItem(
+                id=pdf.id,
+                original_name=pdf.original_name,
+                size=pdf.size,
+                upload_time=pdf.upload_time,
+                processing_status=pdf.processing_status,
+                processed_at=pdf.processed_at,
+                page_count=pdf.page_count,
+                chunk_count=pdf.chunk_count,
+                message_count=conversation.message_count if conversation else 0,
+                last_active=max(
+                    filter(None, [pdf.upload_time, pdf.processed_at,
+                                  conversation.updated_at if conversation else None])
+                ),
+            )
+        )
+    items.sort(key=lambda item: item.last_active, reverse=True)
+    return DocumentsResponse(documents=items)
+
+
+@router.get("/{file_id}/messages", response_model=MessagesResponse)
+def get_messages(
+    file_id: str, current_user: User = Depends(get_current_user)
+) -> MessagesResponse:
+    """The stored conversation about one PDF (empty if none yet)."""
+
+    _owned_pdf(file_id, current_user)
+    conversations = ConversationRepository()
+    conversation = conversations.find_for_source(current_user.id, KIND_PDF, file_id)
+    if conversation is None:
+        return MessagesResponse(messages=[])
+    return MessagesResponse(
+        conversation_id=conversation.id,
+        messages=[MessageOut.of(message) for message in conversations.messages(conversation.id)],
+    )
+
+
+@router.delete("/{file_id}/messages", status_code=status.HTTP_204_NO_CONTENT)
+def clear_messages(file_id: str, current_user: User = Depends(get_current_user)) -> None:
+    """Clear the conversation about one PDF."""
+
+    _owned_pdf(file_id, current_user)
+    conversations = ConversationRepository()
+    conversation = conversations.find_for_source(current_user.id, KIND_PDF, file_id)
+    if conversation:
+        conversations.clear(conversation.id, current_user.id)
+
+
+@router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_document(file_id: str, current_user: User = Depends(get_current_user)) -> None:
+    """Delete a PDF: the file, its text, its search index and its conversation."""
+
+    _owned_pdf(file_id, current_user)
+    path = _storage.path_for(file_id)
+    if path is not None:
+        path.unlink(missing_ok=True)
+    ChunkRepository().delete(file_id)
+    _chroma.delete_document(file_id)
+    ConversationRepository().delete_for_source(current_user.id, KIND_PDF, file_id)
+    PdfMetadataRepository().delete(file_id)

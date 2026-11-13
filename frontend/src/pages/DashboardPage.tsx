@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import type { DashboardData, StatCard, ContinueItem, ActivityItem } from "../api/dashboard";
 import { getDashboard } from "../api/dashboard";
 import { ApiError } from "../api/client";
+import { IconAlert, IconChevronRight } from "../components/icons";
+import { PageBody, PageHeader } from "../components/workspace";
 
 const MOTIVATIONAL = [
   "Keep pushing — every session brings you closer to mastery.",
@@ -10,15 +12,6 @@ const MOTIVATIONAL = [
   "Your curiosity is your superpower.",
   "Every study session is an investment in your future.",
 ];
-
-const STAT_ICONS: Record<string, string> = {
-  "PDFs Studied": "📄",
-  "YouTube Videos": "▶️",
-  "AI Chats": "💬",
-  "Research Papers": "🔬",
-  "Quizzes Generated": "🧠",
-  "Notes Generated": "📝",
-};
 
 const MODULE_NAV = [
   { label: "Learn from PDF", module: "Learn from PDF" },
@@ -66,116 +59,137 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, [navigate]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24 text-slate-400">
-        Loading your dashboard…
-      </div>
-    );
-  }
-
-  if (error || !data) {
-    return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
-        {error || "Dashboard unavailable."}
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-8">
-      {/* Welcome */}
-      <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
-        <h1 className="text-2xl font-bold text-slate-800">
-          Welcome back, {data.user_name} 👋
-        </h1>
-        <p className="mt-1 text-sm text-slate-500">{motivational}</p>
-      </div>
+    <>
+      <PageHeader
+        title={data ? `Welcome back, ${data.user_name}` : "Dashboard"}
+        description={motivational}
+      />
+      <PageBody>
+        {loading ? (
+          <DashboardSkeleton />
+        ) : error || !data ? (
+          <div className="notice-error rounded-card px-4 py-3">
+            <IconAlert className="mt-1 h-4 w-4 shrink-0" />
+            <span>{error || "Dashboard unavailable."}</span>
+          </div>
+        ) : (
+          <div className="space-y-8">
+            <section aria-label="Learning Analytics">
+              <h2 className="section-title mb-3">Learning Analytics</h2>
+              <div className="grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line shadow-card sm:grid-cols-3 xl:grid-cols-6">
+                {data.stats.map((stat) => (
+                  <StatCardUI key={stat.label} stat={stat} />
+                ))}
+              </div>
+            </section>
 
-      {/* Learning Analytics */}
-      <section aria-label="Learning Analytics">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
-          Learning Analytics
-        </h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
-          {data.stats.map((stat) => (
-            <StatCardUI key={stat.label} stat={stat} />
+            <div className="grid gap-6 lg:grid-cols-3">
+              <section className="card card-pad lg:col-span-2">
+                <h2 className="section-title">Continue Learning</h2>
+                {data.continue_learning.length === 0 ? (
+                  <p className="empty-box mt-3">
+                    No recent activity yet. Start learning to see your progress here.
+                  </p>
+                ) : (
+                  <ul className="mt-2 divide-y divide-line">
+                    {data.continue_learning.map((item) => (
+                      <ContinueItemUI
+                        key={`${item.resource_type}-${item.resource_id}`}
+                        item={item}
+                        onNavigate={() =>
+                          navigate("/learn", {
+                            state: {
+                              module: CONTINUE_TO_MODULE[item.resource_type] ?? "Learn from PDF",
+                            },
+                          })
+                        }
+                      />
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="card card-pad">
+                <h2 className="section-title">Quick Actions</h2>
+                <div className="-mx-2 mt-2 flex flex-col">
+                  {MODULE_NAV.map(({ label, module }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => navigate("/learn", { state: { module } })}
+                      className="group flex h-11 w-full items-center justify-between gap-3 rounded-control px-2 text-left text-sm font-medium text-ink-soft transition-colors hover:bg-accent-soft hover:text-accent-ink"
+                    >
+                      {label}
+                      <IconChevronRight className="h-4 w-4 text-faint transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-accent" />
+                    </button>
+                  ))}
+                </div>
+              </section>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-3">
+              <section className="card card-pad lg:col-span-2">
+                <h2 className="section-title">Recent Activity</h2>
+                {data.recent_activity.length === 0 ? (
+                  <p className="empty-box mt-3">No activity yet.</p>
+                ) : (
+                  <ul className="mt-2 divide-y divide-line">
+                    {data.recent_activity.map((entry, i) => (
+                      <ActivityItemUI key={i} entry={entry} />
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="card card-pad">
+                <h2 className="section-title">Learning Insights</h2>
+                <ul className="mt-2 divide-y divide-line">
+                  {data.insights.map((insight) => (
+                    <li
+                      key={insight.label}
+                      className="flex items-baseline justify-between gap-4 py-3 text-sm last:pb-0"
+                    >
+                      <span className="text-muted">{insight.label}</span>
+                      <span className="text-right font-medium tabular-nums text-ink">
+                        {insight.value}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            </div>
+          </div>
+        )}
+      </PageBody>
+    </>
+  );
+}
+
+/** Placeholder that mirrors the dashboard layout so nothing jumps on load. */
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-8" role="status" aria-label="Loading your dashboard">
+      <div>
+        <div className="skeleton mb-3 h-5 w-40" />
+        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-3 xl:grid-cols-6">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="space-y-3 bg-surface p-4 sm:p-5">
+              <div className="skeleton h-3 w-2/3" />
+              <div className="skeleton h-7 w-1/3" />
+            </div>
           ))}
         </div>
-      </section>
-
-      {/* Learning Insights + Continue Learning side by side on larger screens */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Learning Insights */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-base font-semibold text-slate-800">Learning Insights</h2>
-          <ul className="space-y-3">
-            {data.insights.map((insight) => (
-              <li key={insight.label} className="flex items-center justify-between text-sm">
-                <span className="text-slate-500">{insight.label}</span>
-                <span className="font-semibold text-slate-800">{insight.value}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        {/* Continue Learning */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-base font-semibold text-slate-800">Continue Learning</h2>
-          {data.continue_learning.length === 0 ? (
-            <p className="text-sm text-slate-400">
-              No recent activity yet. Start learning to see your progress here.
-            </p>
-          ) : (
-            <ul className="space-y-3">
-              {data.continue_learning.map((item) => (
-                <ContinueItemUI
-                  key={`${item.resource_type}-${item.resource_id}`}
-                  item={item}
-                  onNavigate={() =>
-                    navigate("/learn", {
-                      state: { module: CONTINUE_TO_MODULE[item.resource_type] ?? "Learn from PDF" },
-                    })
-                  }
-                />
-              ))}
-            </ul>
-          )}
-        </section>
       </div>
-
-      {/* Recent Activity + Quick Actions */}
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Recent Activity */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
-          <h2 className="mb-4 text-base font-semibold text-slate-800">Recent Activity</h2>
-          {data.recent_activity.length === 0 ? (
-            <p className="text-sm text-slate-400">No activity yet.</p>
-          ) : (
-            <ul className="space-y-2">
-              {data.recent_activity.map((entry, i) => (
-                <ActivityItemUI key={i} entry={entry} />
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {/* Quick Actions */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-base font-semibold text-slate-800">Quick Actions</h2>
-          <div className="flex flex-col gap-2">
-            {MODULE_NAV.map(({ label, module }) => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => navigate("/learn", { state: { module } })}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:border-orange-300 hover:bg-orange-50 hover:text-orange-600"
-              >
-                {label}
-              </button>
+        {[2, 1].map((span, i) => (
+          <div key={i} className={"card card-pad space-y-4 " + (span === 2 ? "lg:col-span-2" : "")}>
+            <div className="skeleton h-5 w-36" />
+            {[0, 1, 2].map((row) => (
+              <div key={row} className="skeleton h-10 w-full" />
             ))}
           </div>
-        </section>
+        ))}
       </div>
     </div>
   );
@@ -183,31 +197,38 @@ export default function DashboardPage() {
 
 function StatCardUI({ stat }: { stat: StatCard }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm text-center">
-      <div className="text-2xl">{STAT_ICONS[stat.label] ?? "📊"}</div>
-      <div className="mt-1 text-2xl font-bold text-slate-800">{stat.value}</div>
-      <div className="mt-0.5 text-xs text-slate-500">{stat.label}</div>
+    <div className="flex flex-col justify-between gap-3 bg-gradient-to-b from-white to-[#FFF9F4] px-4 py-4 sm:px-5 sm:py-5">
+      <div className="text-[13px] leading-snug text-muted">{stat.label}</div>
+      <div className="text-[1.75rem] font-semibold leading-none tracking-[-0.03em] tabular-nums text-ink">
+        {stat.value}
+      </div>
     </div>
   );
 }
 
+const TYPE_LABEL: Record<string, string> = {
+  pdf: "PDF",
+  youtube: "Video",
+  research: "Research",
+};
+
 function ContinueItemUI({ item, onNavigate }: { item: ContinueItem; onNavigate: () => void }) {
-  const typeLabel: Record<string, string> = {
-    pdf: "📄 PDF",
-    youtube: "▶️ Video",
-    research: "🔬 Research",
-  };
   return (
-    <li className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
+    <li className="flex items-center justify-between gap-4 py-3 last:pb-0">
       <div className="min-w-0">
-        <p className="text-xs font-medium text-slate-400">{typeLabel[item.resource_type] ?? item.resource_type}</p>
-        <p className="truncate text-sm font-medium text-slate-700">{item.title}</p>
-        <p className="text-xs text-slate-400">{timeAgo(item.last_accessed)}</p>
+        <p className="truncate text-sm font-medium text-ink">{item.title}</p>
+        <p className="mt-0.5 text-xs text-muted">
+          <span className="font-medium text-ink-soft">
+            {TYPE_LABEL[item.resource_type] ?? item.resource_type}
+          </span>
+          <span className="mx-1.5 text-faint">/</span>
+          {timeAgo(item.last_accessed)}
+        </p>
       </div>
       <button
         type="button"
         onClick={onNavigate}
-        className="shrink-0 rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600"
+        className="btn btn-sm border border-line-strong bg-surface text-ink hover:border-faint hover:bg-sunken"
       >
         Continue
       </button>
@@ -217,9 +238,9 @@ function ContinueItemUI({ item, onNavigate }: { item: ContinueItem; onNavigate: 
 
 function ActivityItemUI({ entry }: { entry: ActivityItem }) {
   return (
-    <li className="flex items-center justify-between gap-3 text-sm">
-      <span className="text-slate-700">{entry.description}</span>
-      <span className="shrink-0 text-xs text-slate-400">{timeAgo(entry.created_at)}</span>
+    <li className="flex items-baseline justify-between gap-4 py-3 text-sm last:pb-0">
+      <span className="min-w-0 break-words text-ink-soft">{entry.description}</span>
+      <span className="shrink-0 text-xs tabular-nums text-faint">{timeAgo(entry.created_at)}</span>
     </li>
   );
 }

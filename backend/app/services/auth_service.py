@@ -34,6 +34,14 @@ class InvalidCredentialsError(AuthError):
     """Raised when email or password is incorrect."""
 
 
+class AccountNotFoundError(InvalidCredentialsError):
+    """No account is registered with the email."""
+
+
+class WrongPasswordError(InvalidCredentialsError):
+    """The account exists but the password does not match."""
+
+
 class AuthService:
     """Handles user registration, login, and JWT token lifecycle.
 
@@ -69,12 +77,17 @@ class AuthService:
         """Validate credentials and return a JWT token + the user.
 
         Raises:
-            InvalidCredentialsError: If credentials are wrong.
+            AccountNotFoundError: If no account uses this email.
+            WrongPasswordError: If the password does not match.
         """
 
         user = self._repo.get_by_email(email.lower().strip())
-        if not user or not _verify_password(password, user.password_hash):
-            raise InvalidCredentialsError("Invalid email or password.")
+        if not user:
+            raise AccountNotFoundError(
+                "No account found with this email. Check the address or create an account."
+            )
+        if not _verify_password(password, user.password_hash):
+            raise WrongPasswordError("Incorrect password. Try again.")
 
         token = _create_token(user.id)
         return token, user

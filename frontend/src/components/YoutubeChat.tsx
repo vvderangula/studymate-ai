@@ -1,22 +1,50 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useChatScroll } from "../hooks/useChatScroll";
 import { useAuth } from "../context/AuthContext";
 
 import { ApiError } from "../api/client";
-import {
-  clearConversation,
-  loadConversation,
-  saveConversation,
-  type StoredMessage,
-} from "../api/conversations";
+import type { StoredMessageDto } from "../api/history";
 import type { Citation } from "../api/pdf";
-import { chatWithYoutube, processYoutube } from "../api/youtube";
+import {
+  chatWithYoutube,
+  clearVideoMessages,
+  deleteVideo,
+  getVideoMessages,
+  listVideos,
+  processYoutube,
+  type VideoItem,
+} from "../api/youtube";
+import { timeAgo } from "../lib/time";
+import HistoryList from "./HistoryList";
+import { IconChevronRight } from "./icons";
+import { EmptyNote, ErrorNotice, ProgressNotice, TypingIndicator } from "./ui";
+import { AsideCard, Workspace } from "./workspace";
+import Markdown from "./Markdown";
 
 type VideoStatus = "idle" | "processing" | "ready" | "failed";
 type ChatStage = "idle" | "searching" | "generating";
 
-type ChatMessage = StoredMessage;
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  citations?: Citation[];
+}
+
+function fromStored(message: StoredMessageDto): ChatMessage {
+  return { id: message.id, role: message.role, text: message.text, citations: message.citations };
+}
+
+function localId(): string {
+  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatDuration(seconds: number | null): string {
+  if (!seconds) return "";
+  const minutes = Math.round(seconds / 60);
+  return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes} min`;
+}
 
 /** Turn a processing failure into a friendly, user-facing message. */
 function friendlyProcessError(err: unknown): string {
@@ -59,38 +87,83 @@ function friendlyChatError(err: unknown): string {
 export default function YoutubeChat() {
   const { user } = useAuth();
   const userId = user?.user_id;
+  const [videos, setVideos] = useState<VideoItem[]>([]);
+  const [videosLoading, setVideosLoading] = useState(true);
   const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState("");
-  const [title, setTitle] = useState("");
   const [status, setStatus] = useState<VideoStatus>("idle");
   const [processError, setProcessError] = useState("");
+  const [loadingMessages, setLoadingMessages] = useState(false);
   const [stage, setStage] = useState<ChatStage>("idle");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState("");
-  useEffect(() => {
-    setUrl("");
-    setVideoId("");
-    setTitle("");
-    setStatus("idle");
-    setProcessError("");
+  const openingRef = useRef("");
+
+  const selected = videos.find((video) => video.video_id === videoId) ?? null;
+  const title = selected?.title ?? "";
+
+  async function openVideo(id: string) {
+    openingRef.current = id;
+    setVideoId(id);
+    setStatus("ready");
+    setError("");
     setInput("");
     setMessages([]);
-    setError("");
-  }, [userId]);
-
-  // Persist the conversation whenever it changes for an active video.
-  useEffect(() => {
-    if (videoId && userId) {
-      saveConversation(videoId, messages, userId, "youtube");
+    setLoadingMessages(true);
+    try {
+      const result = await getVideoMessages(id);
+      if (openingRef.current === id) setMessages(result.messages.map(fromStored));
+    } catch (err) {
+      if (openingRef.current === id) setError(friendlyChatError(err));
+    } finally {
+      if (openingRef.current === id) setLoadingMessages(false);
     }
-  }, [videoId, messages, userId]);
+  }
+
+  // Load the library and reopen the most recently active video.
+  useEffect(() => {
+    let live = true;
+    setVideosLoading(true);
+    setVideoId("");
+    setStatus("idle");
+    setMessages([]);
+    listVideos()
+      .then((items) => {
+        if (!live) return;
+        setVideos(items);
+        if (items[0]) void openVideo(items[0].video_id);
+      })
+      .catch((err) => {
+        if (live) setError(friendlyChatError(err));
+      })
+      .finally(() => {
+        if (live) setVideosLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   // Keep the latest message in view.
   const endRef = useChatScroll([messages, stage]);
 
   function pushMessage(message: Omit<ChatMessage, "id">) {
-    setMessages((prev) => [...prev, { id: Date.now() + Math.random(), ...message }]);
+    setMessages((prev) => [...prev, { id: localId(), ...message }]);
+  }
+
+  function touchVideo(id: string, extraMessages: number) {
+    setVideos((prev) => {
+      const video = prev.find((item) => item.video_id === id);
+      if (!video) return prev;
+      const updated = {
+        ...video,
+        message_count: video.message_count + extraMessages,
+        last_active: new Date().toISOString(),
+      };
+      return [updated, ...prev.filter((item) => item.video_id !== id)];
+    });
   }
 
   async function handleProcess() {
@@ -106,22 +179,22 @@ export default function YoutubeChat() {
 
     try {
       const result = await processYoutube(trimmed);
-      setVideoId(result.video_id);
-      setTitle(result.title);
-      setStatus("ready");
-
-      const existing = loadConversation(result.video_id, userId, "youtube");
-      if (existing.length > 0) {
-        setMessages(existing);
-        return;
-      }
-      setMessages([
-        {
-          id: Date.now(),
-          role: "assistant",
-          text: `"${result.title}" is ready. Ask me anything about this video.`,
-        },
-      ]);
+      const items = await listVideos().catch(() => videos);
+      setVideos(items);
+      setUrl("");
+      await openVideo(result.video_id);
+      // A first visit gets a short welcome; a returning one shows its history.
+      setMessages((prev) =>
+        prev.length > 0
+          ? prev
+          : [
+              {
+                id: localId(),
+                role: "assistant",
+                text: `"${result.title}" is ready. Ask me anything about this video.`,
+              },
+            ],
+      );
     } catch (err) {
       setStatus("failed");
       setProcessError(friendlyProcessError(err));
@@ -149,6 +222,7 @@ export default function YoutubeChat() {
         text: result.answer,
         citations: result.citations,
       });
+      touchVideo(videoId, 2);
     } catch (err) {
       setError(friendlyChatError(err));
     } finally {
@@ -164,12 +238,39 @@ export default function YoutubeChat() {
     }
   }
 
-  function handleClear() {
-    if (videoId) {
-      clearConversation(videoId, userId, "youtube");
+  async function handleClear() {
+    if (!videoId) return;
+    try {
+      await clearVideoMessages(videoId);
+      setMessages([]);
+      setError("");
+      setVideos((prev) =>
+        prev.map((video) => (video.video_id === videoId ? { ...video, message_count: 0 } : video)),
+      );
+    } catch (err) {
+      setError(friendlyChatError(err));
     }
-    setMessages([]);
-    setError("");
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await deleteVideo(id);
+    } catch (err) {
+      setError(friendlyChatError(err));
+      return;
+    }
+    const remaining = videos.filter((video) => video.video_id !== id);
+    setVideos(remaining);
+    if (id === videoId) {
+      if (remaining[0]) {
+        void openVideo(remaining[0].video_id);
+      } else {
+        openingRef.current = "";
+        setVideoId("");
+        setStatus("idle");
+        setMessages([]);
+      }
+    }
   }
 
   const ready = status === "ready" && Boolean(videoId);
@@ -177,16 +278,34 @@ export default function YoutubeChat() {
   const processing = status === "processing";
 
   return (
-    <div className="space-y-4 sm:space-y-5">
-      {/* Video URL & processing */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <label
-          htmlFor="youtube-url"
-          className="mb-2 block text-sm font-medium text-slate-700"
-        >
-          YouTube video URL
-        </label>
-        <div className="flex flex-col gap-2 sm:flex-row">
+    <Workspace
+      aside={
+        <>
+          {(videos.length > 0 || videosLoading) && (
+            <HistoryList
+              title="Your videos"
+              loading={videosLoading}
+              items={videos.map((video) => ({
+                id: video.video_id,
+                title: video.title,
+                subtitle: [
+                  formatDuration(video.duration),
+                  video.message_count > 0 ? `${video.message_count} messages` : "",
+                ]
+                  .filter(Boolean)
+                  .join(", "),
+                meta: timeAgo(video.last_active),
+              }))}
+              selectedId={videoId}
+              emptyText="No videos yet."
+              onSelect={(id) => void openVideo(id)}
+              onDelete={(id) => void handleDelete(id)}
+            />
+          )}
+        <AsideCard title={videos.length > 0 ? "Add a video" : "Video"}>
+          <label htmlFor="youtube-url" className="field-label">
+            YouTube video URL
+          </label>
           <input
             id="youtube-url"
             type="url"
@@ -201,127 +320,109 @@ export default function YoutubeChat() {
             disabled={processing}
             placeholder="https://www.youtube.com/watch?v=…"
             aria-label="YouTube video URL"
-            className="flex-1 rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
+            className="field"
           />
           <button
             type="button"
             onClick={() => void handleProcess()}
             disabled={processing || !url.trim()}
-            className="rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
+            className="btn-primary mt-3 w-full"
           >
+            {processing && <span className="spinner" aria-hidden="true" />}
             {processing ? "Processing…" : "Process"}
           </button>
-        </div>
 
-        {processing && (
-          <p className="mt-3 text-sm text-slate-500" role="status">
-            Retrieving transcript and preparing the video…
+          {processing && (
+            <ProgressNotice className="mt-3">
+              Retrieving transcript and preparing the video…
+            </ProgressNotice>
+          )}
+          {status === "failed" && <ErrorNotice className="mt-3">{processError}</ErrorNotice>}
+          {status === "idle" && processError && (
+            <ErrorNotice className="mt-3">{processError}</ErrorNotice>
+          )}
+          <p className="mt-3 text-xs leading-5 text-muted">
+            Works with any video that has captions or an auto-generated transcript.
           </p>
-        )}
-
-        {status === "ready" && title && (
-          <p className="mt-3 text-sm text-green-600" role="status">
-            "{title}" is ready to chat.
-          </p>
-        )}
-
-        {status === "failed" && (
-          <p className="mt-3 text-sm text-red-600" role="alert">
-            {processError}
-          </p>
-        )}
-
-        {status === "idle" && processError && (
-          <p className="mt-3 text-sm text-red-600" role="alert">
-            {processError}
-          </p>
-        )}
-      </div>
-
-      {/* Chat */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-slate-700">Chat</h2>
+        </AsideCard>
+        </>
+      }
+    >
+      <div className="pane">
+        <div className="pane-head">
+          <div className="min-w-0">
+            <h2 className="section-title">Chat</h2>
+            {ready && title && (
+              <p className="truncate text-xs text-muted">Answers come from {title}</p>
+            )}
+          </div>
           {ready && messages.length > 0 && (
-            <button
-              type="button"
-              onClick={handleClear}
-              className="rounded-md px-2 py-1 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
-            >
+            <button type="button" onClick={() => void handleClear()} className="btn-ghost -mr-2">
               Clear conversation
             </button>
           )}
         </div>
 
-        {/* Conversation */}
-        <div
-          className="max-h-[26rem] min-h-[8rem] space-y-3 overflow-y-auto pr-1"
-          role="log"
-          aria-live="polite"
-          aria-label="Conversation"
-        >
-          {!ready ? (
-            <EmptyState status={status} />
-          ) : messages.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-400">
-              No messages yet. Ask your first question below.
-            </p>
-          ) : (
-            messages.map((message) => (
-              <MessageBubble key={message.id} message={message} videoId={videoId} />
-            ))
-          )}
+        <div className="pane-scroll">
+          <div className="chat-log" role="log" aria-live="polite" aria-label="Conversation">
+            {loadingMessages ? (
+              <div className="space-y-4" role="status" aria-label="Loading conversation">
+                <div className="skeleton ml-auto h-10 w-2/3" />
+                <div className="skeleton h-20 w-5/6" />
+              </div>
+            ) : !ready ? (
+              <EmptyState status={status} />
+            ) : messages.length === 0 ? (
+              <EmptyNote>No messages yet. Ask your first question below.</EmptyNote>
+            ) : (
+              messages.map((message) => (
+                <MessageBubble key={message.id} message={message} videoId={videoId} />
+              ))
+            )}
 
-          {busy && (
-            <div
-              className="mr-auto max-w-[85%] rounded-2xl bg-slate-100 px-4 py-2 text-sm text-slate-500"
-              role="status"
-            >
-              <span className="inline-flex items-center gap-2">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-orange-400" />
-                {stage === "searching"
-                  ? "Searching the transcript…"
-                  : "Generating answer…"}
-              </span>
-            </div>
-          )}
+            {busy && (
+              <TypingIndicator>
+                {stage === "searching" ? "Searching the transcript…" : "Generating answer…"}
+              </TypingIndicator>
+            )}
 
-          <div ref={endRef} />
+            <div ref={endRef} />
+          </div>
         </div>
 
-        {error && (
-          <p className="mt-3 text-sm text-red-600" role="alert">
-            {error}
-          </p>
-        )}
-
-        {/* Composer */}
-        <div className="mt-4 flex items-end gap-2">
-          <textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={!ready || busy}
-            rows={1}
-            aria-label="Ask a question about this video"
-            placeholder={
-              ready
-                ? "Ask a question…  (Enter to send, Shift+Enter for a new line)"
-                : "Process a video to start chatting"
-            }
-            className="max-h-32 min-h-[2.75rem] flex-1 resize-y rounded-lg border border-slate-300 px-4 py-2.5 text-sm leading-relaxed outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
-          />
-          <button
-            type="button"
-            onClick={() => void handleSend()}
-            disabled={!ready || busy || !input.trim()}
-            className="rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
-          >
-            {busy ? "…" : "Send"}
-          </button>
+        <div className="pane-foot">
+          <div className="mx-auto w-full max-w-reading">
+            {error && <ErrorNotice className="mb-3">{error}</ErrorNotice>}
+            <div className="composer">
+              <textarea
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={!ready || busy}
+                rows={1}
+                aria-label="Ask a question about this video"
+                placeholder={
+                  ready ? "Ask a question about this video…" : "Process a video to start chatting"
+                }
+                className="composer-input"
+              />
+              <button
+                type="button"
+                onClick={() => void handleSend()}
+                disabled={!ready || busy || !input.trim()}
+                className="composer-send"
+              >
+                {busy && <span className="spinner" aria-hidden="true" />}
+                Send
+              </button>
+            </div>
+            <p className="mt-2 hidden text-center text-xs text-faint sm:block">
+              Enter to send, Shift + Enter for a new line
+            </p>
+          </div>
         </div>
       </div>
-    </div>
+    </Workspace>
   );
 }
 
@@ -332,13 +433,9 @@ function EmptyState({ status }: { status: VideoStatus }) {
       ? "Preparing your video… this may take a moment."
       : status === "failed"
         ? "We couldn't prepare that video. Please try another URL."
-        : "No video yet. Paste a YouTube URL above to start a conversation.";
+        : "No video yet. Paste a YouTube link to start a conversation.";
 
-  return (
-    <div className="flex h-full min-h-[8rem] flex-col items-center justify-center gap-2 py-8 text-center">
-      <p className="text-sm text-slate-500">{message}</p>
-    </div>
-  );
+  return <EmptyNote>{message}</EmptyNote>;
 }
 
 /** A single chat bubble, with timestamp citations for grounded AI answers. */
@@ -352,13 +449,8 @@ function MessageBubble({
   const isUser = message.role === "user";
   return (
     <div className={isUser ? "flex justify-end" : "flex justify-start"}>
-      <div
-        className={
-          "max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2 text-sm leading-relaxed " +
-          (isUser ? "bg-orange-500 text-white" : "bg-slate-100 text-slate-800")
-        }
-      >
-        {message.text}
+      <div className={isUser ? "bubble-user" : "bubble-assistant"}>
+        {isUser ? message.text : <Markdown>{message.text}</Markdown>}
         {!isUser && message.citations && message.citations.length > 0 && (
           <Citations citations={message.citations} videoId={videoId} />
         )}
@@ -383,14 +475,19 @@ function Citations({
   }
 
   return (
-    <div className="mt-2 border-t border-slate-200 pt-2">
+    <div className="mt-3 whitespace-normal border-t border-line pt-3">
       <div className="flex flex-wrap items-center gap-1.5">
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
           aria-expanded={expanded}
-          className="rounded-md px-1.5 py-0.5 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-200"
+          className="mr-1 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted transition-colors hover:bg-sunken hover:text-ink"
         >
+          <IconChevronRight
+            className={
+              "h-3.5 w-3.5 transition-transform duration-150 " + (expanded ? "rotate-90" : "")
+            }
+          />
           {expanded ? "Hide sources" : `Sources (${citations.length})`}
         </button>
         {citations.map((citation) => (
@@ -399,7 +496,7 @@ function Citations({
             href={videoLink(citation.page)}
             target="_blank"
             rel="noreferrer"
-            className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700 transition-colors hover:bg-orange-200"
+            className="chip tabular-nums"
           >
             {citation.source_reference}
           </a>
@@ -407,14 +504,14 @@ function Citations({
       </div>
 
       {expanded && (
-        <ul className="mt-2 space-y-1">
+        <ul className="mt-2.5 space-y-1.5 border-l-2 border-accent-line pl-3">
           {citations.map((citation) => (
-            <li key={citation.chunk_id} className="text-xs text-slate-500">
+            <li key={citation.chunk_id} className="text-xs leading-relaxed text-muted">
               <a
                 href={videoLink(citation.page)}
                 target="_blank"
                 rel="noreferrer"
-                className="font-medium text-slate-600 underline-offset-2 hover:underline"
+                className="font-medium text-ink-soft underline-offset-2 hover:text-accent hover:underline"
               >
                 {citation.source_reference}
               </a>

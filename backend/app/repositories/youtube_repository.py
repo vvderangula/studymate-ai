@@ -1,140 +1,92 @@
-"""Repository for persisting and retrieving YouTube video metadata."""
+"""Repository for processed YouTube video metadata.
 
-import sqlite3
-from collections.abc import Callable
-from datetime import datetime
+Records are per user: the same video can belong to several people, each with
+their own record. The transcript vectors are shared (keyed by video id).
+"""
 
-from app.core.database import connect
+from __future__ import annotations
+
+from pymongo import DESCENDING
+
+from app.core.database import Collections
 from app.models.youtube import YoutubeMetadata
+from app.repositories.base import MongoRepository, as_utc
 
 
-class YoutubeMetadataRepository:
-    """Data-access layer for ``youtube_videos``.
+class YoutubeMetadataRepository(MongoRepository):
+    """The only component that reads or writes ``youtube_videos``.
 
-    This is the only component permitted to read from or write to the
-    YouTube metadata table. A connection factory is injected to keep the
-    repository testable against an isolated database.
+    Pass ``user_id`` to scope every lookup to that user's records.
     """
 
-    def __init__(
-        self,
-        connection_factory: Callable[[], sqlite3.Connection] = connect,
-    ) -> None:
-        self._connect = connection_factory
+    collection_name = Collections.VIDEOS
+
+    def __init__(self, user_id: str | None = None, db=None) -> None:
+        super().__init__(db)
+        self._user_id = user_id
+
+    def _scope(self, query: dict) -> dict:
+        return {**query, "user_id": self._user_id} if self._user_id else query
 
     def upsert(self, record: YoutubeMetadata) -> None:
-        """Insert a new video record or replace an existing one."""
+        """Insert or update the record for (user, video)."""
 
-        connection = self._connect()
-        try:
-            connection.execute(
-                """
-                INSERT INTO youtube_videos (
-                    video_id, url, title, duration, thumbnail, created_at,
-                    user_id, processing_status, processed_at, chunk_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(video_id) DO UPDATE SET
-                    url = excluded.url,
-                    title = excluded.title,
-                    duration = excluded.duration,
-                    thumbnail = excluded.thumbnail,
-                    user_id = excluded.user_id,
-                    processing_status = excluded.processing_status,
-                    processed_at = excluded.processed_at,
-                    chunk_count = excluded.chunk_count
-                """,
-                (
-                    record.video_id,
-                    record.url,
-                    record.title,
-                    record.duration,
-                    record.thumbnail,
-                    record.created_at.isoformat() if record.created_at else None,
-                    record.user_id,
-                    record.processing_status,
-                    record.processed_at.isoformat() if record.processed_at else None,
-                    record.chunk_count,
-                ),
-            )
-            connection.commit()
-        finally:
-            connection.close()
+        self.collection.update_one(
+            {"user_id": record.user_id, "video_id": record.video_id},
+            {
+                "$set": {
+                    "url": record.url,
+                    "title": record.title,
+                    "duration": record.duration,
+                    "thumbnail": record.thumbnail,
+                    "processing_status": record.processing_status,
+                    "processed_at": record.processed_at,
+                    "chunk_count": record.chunk_count,
+                },
+                "$setOnInsert": {"created_at": record.created_at},
+            },
+            upsert=True,
+        )
 
     def get(self, video_id: str) -> YoutubeMetadata | None:
-        """Return the metadata for ``video_id``, or ``None`` if not found."""
+        """Return a record for ``video_id`` (the scoped user's, if scoped)."""
 
-        connection = self._connect()
-        try:
-            row = connection.execute(
-                """
-                SELECT video_id, url, title, duration, thumbnail, created_at,
-                       user_id, processing_status, processed_at, chunk_count
-                FROM youtube_videos
-                WHERE video_id = ?
-                """,
-                (video_id,),
-            ).fetchone()
-        finally:
-            connection.close()
-
-        if row is None:
-            return None
-        return _row_to_metadata(row)
+        return _to_metadata(self.collection.find_one(self._scope({"video_id": video_id})))
 
     def list_processed(self) -> list[YoutubeMetadata]:
-        """Return all videos whose processing has completed, newest first."""
+        """Completed videos, newest first (scoped if a user was given)."""
 
-        connection = self._connect()
-        try:
-            rows = connection.execute(
-                """
-                SELECT video_id, url, title, duration, thumbnail, created_at,
-                       user_id, processing_status, processed_at, chunk_count
-                FROM youtube_videos
-                WHERE processing_status = 'completed'
-                ORDER BY processed_at DESC
-                """
-            ).fetchall()
-        finally:
-            connection.close()
-
-        return [_row_to_metadata(row) for row in rows]
+        cursor = self.collection.find(self._scope({"processing_status": "completed"})).sort(
+            "processed_at", DESCENDING
+        )
+        return [_to_metadata(doc) for doc in cursor]
 
     def list_by_user(self, user_id: str) -> list[YoutubeMetadata]:
-        """Return completed videos owned by the given user, newest first."""
+        """Completed videos owned by ``user_id``, newest first."""
 
-        connection = self._connect()
-        try:
-            rows = connection.execute(
-                """
-                SELECT video_id, url, title, duration, thumbnail, created_at,
-                       user_id, processing_status, processed_at, chunk_count
-                FROM youtube_videos
-                WHERE processing_status = 'completed' AND user_id = ?
-                ORDER BY processed_at DESC
-                """,
-                (user_id,),
-            ).fetchall()
-        finally:
-            connection.close()
+        cursor = self.collection.find(
+            {"processing_status": "completed", "user_id": user_id}
+        ).sort("processed_at", DESCENDING)
+        return [_to_metadata(doc) for doc in cursor]
 
-        return [_row_to_metadata(row) for row in rows]
+    def delete(self, user_id: str, video_id: str) -> None:
+        """Remove one user's record of a video."""
+
+        self.collection.delete_one({"user_id": user_id, "video_id": video_id})
 
 
-def _row_to_metadata(row: sqlite3.Row) -> YoutubeMetadata:
-    """Map a database row to a :class:`YoutubeMetadata` instance."""
-
-    created_at = row["created_at"]
-    processed_at = row["processed_at"]
+def _to_metadata(doc: dict | None) -> YoutubeMetadata | None:
+    if doc is None:
+        return None
     return YoutubeMetadata(
-        video_id=row["video_id"],
-        url=row["url"],
-        title=row["title"],
-        duration=row["duration"],
-        thumbnail=row["thumbnail"],
-        created_at=datetime.fromisoformat(created_at) if created_at else None,
-        user_id=row["user_id"],
-        processing_status=row["processing_status"],
-        processed_at=datetime.fromisoformat(processed_at) if processed_at else None,
-        chunk_count=row["chunk_count"],
+        video_id=doc["video_id"],
+        url=doc["url"],
+        title=doc["title"],
+        duration=doc.get("duration"),
+        thumbnail=doc.get("thumbnail"),
+        created_at=as_utc(doc.get("created_at")),
+        user_id=doc.get("user_id"),
+        processing_status=doc.get("processing_status", "pending"),
+        processed_at=as_utc(doc.get("processed_at")),
+        chunk_count=doc.get("chunk_count"),
     )

@@ -5,14 +5,23 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.auth import get_current_user
+from app.models.conversation import KIND_YOUTUBE
+from app.models.youtube import YoutubeMetadata
 from app.models.user import User
 from app.repositories.activity_repository import ActivityRepository
+from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.youtube_repository import YoutubeMetadataRepository
 from app.schemas.pdf import ChatRequest, ChatResponse, Citation
-from app.schemas.youtube import ProcessYoutubeRequest, YoutubeProcessResponse
-from app.services.chunk_storage import ChunkStorageService
-from app.services.embeddings import EmbeddingError, HuggingFaceEmbeddingService
-from app.services.llm import HuggingFaceLLMService, LLMError
+from app.schemas.history import MessageOut, MessagesResponse
+from app.schemas.youtube import (
+    ProcessYoutubeRequest,
+    VideoItem,
+    VideosResponse,
+    YoutubeProcessResponse,
+)
+from app.repositories.chunk_repository import ChunkRepository
+from app.services.embeddings import EmbeddingError, create_embedding_service
+from app.services.llm import LLMError, create_llm_service
 from app.services.rag import (
     PdfNotFoundError,
     PdfNotProcessedError,
@@ -32,8 +41,8 @@ from app.services.youtube import (
 router = APIRouter(prefix="/youtube", tags=["youtube"])
 logger = logging.getLogger(__name__)
 
-_chunk_storage = ChunkStorageService()
-_embeddings = HuggingFaceEmbeddingService()
+_chunk_storage = ChunkRepository()
+_embeddings = create_embedding_service()
 _chroma = ChromaService()
 _youtube_processor = YoutubeProcessingService(
     YoutubeTranscriptService(),
@@ -63,7 +72,7 @@ def get_rag_service() -> RAGService:
     return RAGService(
         retriever=_retriever,
         prompt_builder=PromptBuilder(),
-        llm=HuggingFaceLLMService(),
+        llm=create_llm_service(),
         indexer=_youtube_processor,
         repository=YoutubeMetadataRepository(),
     )
@@ -92,7 +101,7 @@ def process_youtube(
     except (TranscriptUnavailableError, YoutubeProcessingError) as exc:
         logger.info("YouTube processing failed for '%s': %s", request.url, exc)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
     except EmbeddingError as exc:
@@ -141,12 +150,10 @@ def chat_with_youtube(
             detail="Question must not be empty.",
         )
 
-    video_meta = YoutubeMetadataRepository().get(video_id)
-    if (
-        video_meta is not None
-        and video_meta.user_id is not None
-        and video_meta.user_id != current_user.id
-    ):
+    # Records are per user, so an unscoped hit owned by someone else means
+    # this user never processed the video.
+    video_meta = YoutubeMetadataRepository(user_id=current_user.id).get(video_id)
+    if video_meta is None and YoutubeMetadataRepository().get(video_id) is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Video not found.",
@@ -161,7 +168,7 @@ def chat_with_youtube(
         ) from exc
     except PdfNotProcessedError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="The video has not been processed yet.",
         ) from exc
     except (EmbeddingError, LLMError) as exc:
@@ -171,6 +178,25 @@ def chat_with_youtube(
             detail=str(exc),
         ) from exc
 
+    conversations = ConversationRepository()
+    conversation = conversations.get_or_create_for_source(
+        current_user.id, KIND_YOUTUBE, video_id, video_meta.title if video_meta else "Video"
+    )
+    conversations.add_message(conversation, "user", question)
+    conversations.add_message(
+        conversation,
+        "assistant",
+        result.answer,
+        [
+            {
+                "page": citation.page,
+                "chunk_id": citation.chunk_id,
+                "source_reference": citation.source_reference,
+            }
+            for citation in result.citations
+        ],
+    )
+
     ActivityRepository().log(
         current_user.id,
         "youtube_chat",
@@ -178,6 +204,7 @@ def chat_with_youtube(
         resource_title=video_meta.title if video_meta else None,
     )
     return ChatResponse(
+        conversation_id=conversation.id,
         answer=result.answer,
         citations=[
             Citation(
@@ -189,3 +216,85 @@ def chat_with_youtube(
         ],
         metadata=result.metadata,
     )
+
+
+def _owned_video(video_id: str, user: User) -> YoutubeMetadata:
+    """The user's record of a video, otherwise a 404."""
+
+    video = YoutubeMetadataRepository(user_id=user.id).get(video_id)
+    if video is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
+    return video
+
+
+@router.get("/videos", response_model=VideosResponse)
+def list_videos(current_user: User = Depends(get_current_user)) -> VideosResponse:
+    """The user's processed videos with chat counts, most recently active first."""
+
+    conversations = {
+        conversation.source_id: conversation
+        for conversation in ConversationRepository().list(current_user.id, KIND_YOUTUBE, limit=500)
+    }
+    items = []
+    for video in YoutubeMetadataRepository().list_by_user(current_user.id):
+        conversation = conversations.get(video.video_id)
+        moments = [video.created_at, video.processed_at,
+                   conversation.updated_at if conversation else None]
+        items.append(
+            VideoItem(
+                video_id=video.video_id,
+                url=video.url,
+                title=video.title,
+                duration=video.duration,
+                thumbnail=video.thumbnail,
+                processed_at=video.processed_at,
+                chunk_count=video.chunk_count,
+                message_count=conversation.message_count if conversation else 0,
+                last_active=max(filter(None, moments)),
+            )
+        )
+    items.sort(key=lambda item: item.last_active, reverse=True)
+    return VideosResponse(videos=items)
+
+
+@router.get("/{video_id}/messages", response_model=MessagesResponse)
+def get_messages(
+    video_id: str, current_user: User = Depends(get_current_user)
+) -> MessagesResponse:
+    """The stored conversation about one video (empty if none yet)."""
+
+    _owned_video(video_id, current_user)
+    conversations = ConversationRepository()
+    conversation = conversations.find_for_source(current_user.id, KIND_YOUTUBE, video_id)
+    if conversation is None:
+        return MessagesResponse(messages=[])
+    return MessagesResponse(
+        conversation_id=conversation.id,
+        messages=[MessageOut.of(message) for message in conversations.messages(conversation.id)],
+    )
+
+
+@router.delete("/{video_id}/messages", status_code=status.HTTP_204_NO_CONTENT)
+def clear_messages(video_id: str, current_user: User = Depends(get_current_user)) -> None:
+    """Clear the conversation about one video."""
+
+    _owned_video(video_id, current_user)
+    conversations = ConversationRepository()
+    conversation = conversations.find_for_source(current_user.id, KIND_YOUTUBE, video_id)
+    if conversation:
+        conversations.clear(conversation.id, current_user.id)
+
+
+@router.delete("/{video_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_video(video_id: str, current_user: User = Depends(get_current_user)) -> None:
+    """Remove a video from the user's library, with its conversation.
+
+    The shared transcript index is kept while anyone else still has the video.
+    """
+
+    _owned_video(video_id, current_user)
+    ConversationRepository().delete_for_source(current_user.id, KIND_YOUTUBE, video_id)
+    YoutubeMetadataRepository().delete(current_user.id, video_id)
+    if YoutubeMetadataRepository().get(video_id) is None:
+        ChunkRepository().delete(video_id)
+        _chroma.delete_document(video_id)

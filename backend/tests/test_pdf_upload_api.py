@@ -4,7 +4,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
-from app.core.database import init_db
 from app.main import app
 
 client = TestClient(app)
@@ -15,8 +14,6 @@ def isolated_storage(tmp_path, monkeypatch):
     """Redirect uploads and the database to a temporary location per test."""
 
     monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
-    monkeypatch.setattr(settings, "database_path", str(tmp_path / "test.db"))
-    init_db()
     yield
 
 

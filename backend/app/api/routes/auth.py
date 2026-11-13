@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.core.auth import get_current_user
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
+from app.core.config import settings
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserResponse
 from app.services.auth_service import (
     AuthService,
@@ -48,6 +49,7 @@ def register(
         user_id=user.id,
         full_name=user.full_name,
         email=user.email,
+        role=settings.role_for(user.email),
     )
 
 
@@ -76,6 +78,7 @@ def login(
         user_id=user.id,
         full_name=user.full_name,
         email=user.email,
+        role=settings.role_for(user.email),
     )
 
 
@@ -87,4 +90,5 @@ def get_me(current_user: User = Depends(get_current_user)) -> UserResponse:
         id=current_user.id,
         full_name=current_user.full_name,
         email=current_user.email,
+        role=settings.role_for(current_user.email),
     )

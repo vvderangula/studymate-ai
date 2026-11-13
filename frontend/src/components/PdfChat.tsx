@@ -1,24 +1,45 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useChatScroll } from "../hooks/useChatScroll";
 import { useAuth } from "../context/AuthContext";
 
 import { ApiError } from "../api/client";
+import type { StoredMessageDto } from "../api/history";
 import {
-  clearConversation,
-  getLastPdfId,
-  loadConversation,
-  saveConversation,
-  setLastPdfId,
-  type StoredMessage,
-} from "../api/conversations";
-import { chatWithPdf, type Citation, type ProcessResult } from "../api/pdf";
+  chatWithPdf,
+  clearPdfMessages,
+  deleteDocument,
+  getPdfMessages,
+  listDocuments,
+  type Citation,
+  type DocumentItem,
+  type ProcessResult,
+} from "../api/pdf";
+import { timeAgo } from "../lib/time";
+import HistoryList from "./HistoryList";
 import PdfUpload from "./PdfUpload";
+import { IconChevronRight } from "./icons";
+import { EmptyNote, ErrorNotice, TypingIndicator } from "./ui";
+import { AsideCard, Workspace } from "./workspace";
+import Markdown from "./Markdown";
 
 type UploadStatus = "idle" | "uploading" | "processing" | "ready" | "failed";
 type ChatStage = "idle" | "searching" | "generating";
 
-type ChatMessage = StoredMessage;
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  citations?: Citation[];
+}
+
+function fromStored(message: StoredMessageDto): ChatMessage {
+  return { id: message.id, role: message.role, text: message.text, citations: message.citations };
+}
+
+function localId(): string {
+  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 /** Turn a chat failure into a friendly, user-facing message. */
 function friendlyError(err: unknown): string {
@@ -40,66 +61,129 @@ function friendlyError(err: unknown): string {
   return "Network error. Please check your connection and try again.";
 }
 
-/** Learn from PDF module: upload and process a PDF, then chat with its contents. */
+function describe(doc: DocumentItem): string {
+  if (doc.processing_status === "failed") return "Couldn't read this PDF";
+  if (doc.processing_status !== "completed") return "Not processed yet";
+  const pages = `${doc.page_count ?? 0} page${doc.page_count === 1 ? "" : "s"}`;
+  return doc.message_count > 0 ? `${pages}, ${doc.message_count} messages` : pages;
+}
+
+/**
+ * Learn from PDF: the user's PDF library on the left (stored on the server),
+ * and the saved conversation with the selected PDF on the right.
+ */
 export default function PdfChat() {
   const { user } = useAuth();
   const userId = user?.user_id;
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [docsLoading, setDocsLoading] = useState(true);
   const [fileId, setFileId] = useState<string>("");
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>("idle");
+  const [loadingMessages, setLoadingMessages] = useState(false);
   const [stage, setStage] = useState<ChatStage>("idle");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState("");
-  // Resume the most recent conversation on first mount, if one exists.
-  useEffect(() => {
-    const lastId = getLastPdfId(userId);
-    if (lastId) {
-      setFileId(lastId);
-      setMessages(loadConversation(lastId, userId, "pdf"));
-      setUploadStatus("ready");
-      return;
-    }
+  // The PDF most recently asked for; late responses for others are ignored.
+  const openingRef = useRef("");
 
+  const selected = documents.find((doc) => doc.id === fileId) ?? null;
+
+  async function openDocument(id: string) {
+    openingRef.current = id;
+    setFileId(id);
+    setError("");
+    setInput("");
+    setMessages([]);
+    setLoadingMessages(true);
+    try {
+      const result = await getPdfMessages(id);
+      if (openingRef.current === id) setMessages(result.messages.map(fromStored));
+    } catch (err) {
+      if (openingRef.current === id) setError(friendlyError(err));
+    } finally {
+      if (openingRef.current === id) setLoadingMessages(false);
+    }
+  }
+
+  // Load the library and reopen the most recently active PDF.
+  useEffect(() => {
+    let live = true;
+    setDocsLoading(true);
     setFileId("");
     setMessages([]);
-    setUploadStatus("idle");
-    setInput("");
-    setError("");
+    listDocuments()
+      .then((docs) => {
+        if (!live) return;
+        setDocuments(docs);
+        const recent = docs.find((doc) => doc.processing_status === "completed");
+        if (recent) void openDocument(recent.id);
+      })
+      .catch((err) => {
+        if (live) setError(friendlyError(err));
+      })
+      .finally(() => {
+        if (live) setDocsLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
-
-  // Persist the conversation whenever it changes for an active PDF.
-  useEffect(() => {
-    if (fileId && userId) {
-      saveConversation(fileId, messages, userId, "pdf");
-    }
-  }, [fileId, messages, userId]);
 
   // Keep the latest message in view.
   const endRef = useChatScroll([messages, stage]);
 
   function pushMessage(message: Omit<ChatMessage, "id">) {
-    setMessages((prev) => [...prev, { id: Date.now() + Math.random(), ...message }]);
+    setMessages((prev) => [...prev, { id: localId(), ...message }]);
   }
 
-  function handleProcessed(id: string, result: ProcessResult) {
-    setLastPdfId(id, userId);
+  /** Bump a document to the top of the list after activity. */
+  function touchDocument(id: string, extraMessages: number) {
+    setDocuments((prev) => {
+      const doc = prev.find((item) => item.id === id);
+      if (!doc) return prev;
+      const updated = {
+        ...doc,
+        message_count: doc.message_count + extraMessages,
+        last_active: new Date().toISOString(),
+      };
+      return [updated, ...prev.filter((item) => item.id !== id)];
+    });
+  }
+
+  function handleProcessed(id: string, result: ProcessResult, name = "") {
+    const now = new Date().toISOString();
+    const fresh: DocumentItem = {
+      id,
+      original_name: name || "Your PDF",
+      size: 0,
+      upload_time: now,
+      processing_status: "completed",
+      processed_at: result.processed_at,
+      page_count: result.page_count,
+      chunk_count: result.chunk_count,
+      message_count: 0,
+      last_active: now,
+    };
+    setDocuments((prev) => [fresh, ...prev.filter((doc) => doc.id !== id)]);
+    openingRef.current = id;
     setFileId(id);
     setError("");
-
-    const existing = loadConversation(id, userId, "pdf");
-    if (existing.length > 0) {
-      setMessages(existing);
-      return;
-    }
+    setLoadingMessages(false);
     setMessages([
       {
-        id: Date.now(),
+        id: localId(),
         role: "assistant",
         text: `Your PDF is ready (${result.page_count ?? 0} pages, ${
           result.chunk_count ?? 0
         } chunks). Ask me anything about it.`,
       },
     ]);
+    // Pick up exact server values (size etc.) in the background.
+    listDocuments()
+      .then(setDocuments)
+      .catch(() => undefined);
   }
 
   async function handleSend() {
@@ -123,6 +207,7 @@ export default function PdfChat() {
         text: result.answer,
         citations: result.citations,
       });
+      touchDocument(fileId, 2);
     } catch (err) {
       setError(friendlyError(err));
     } finally {
@@ -138,106 +223,155 @@ export default function PdfChat() {
     }
   }
 
-  function handleClear() {
-    if (fileId) {
-      clearConversation(fileId, userId, "pdf");
+  async function handleClear() {
+    if (!fileId) return;
+    try {
+      await clearPdfMessages(fileId);
+      setMessages([]);
+      setError("");
+      setDocuments((prev) =>
+        prev.map((doc) => (doc.id === fileId ? { ...doc, message_count: 0 } : doc)),
+      );
+    } catch (err) {
+      setError(friendlyError(err));
     }
-    setMessages([]);
-    setError("");
   }
 
-  const ready = uploadStatus === "ready" && Boolean(fileId);
+  async function handleDelete(id: string) {
+    try {
+      await deleteDocument(id);
+    } catch (err) {
+      setError(friendlyError(err));
+      return;
+    }
+    const remaining = documents.filter((doc) => doc.id !== id);
+    setDocuments(remaining);
+    if (id === fileId) {
+      const next = remaining.find((doc) => doc.processing_status === "completed");
+      if (next) {
+        void openDocument(next.id);
+      } else {
+        openingRef.current = "";
+        setFileId("");
+        setMessages([]);
+      }
+    }
+  }
+
+  const ready = Boolean(selected && selected.processing_status === "completed");
   const busy = stage !== "idle";
+  const hasDocs = documents.length > 0;
 
   return (
-    <div className="space-y-4 sm:space-y-5">
-      {/* Upload & processing */}
-      <PdfUpload onProcessed={handleProcessed} onStatusChange={setUploadStatus} />
-
-      {/* Chat */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-slate-700">Chat</h2>
+    <Workspace
+      aside={
+        <>
+          {(hasDocs || docsLoading) && (
+            <HistoryList
+              title="Your PDFs"
+              loading={docsLoading}
+              items={documents.map((doc) => ({
+                id: doc.id,
+                title: doc.original_name,
+                subtitle: describe(doc),
+                meta: timeAgo(doc.last_active),
+              }))}
+              selectedId={fileId}
+              emptyText="No PDFs yet."
+              onSelect={(id) => void openDocument(id)}
+              onDelete={(id) => void handleDelete(id)}
+            />
+          )}
+          <AsideCard title={hasDocs ? "Add a PDF" : "Upload a PDF"}>
+            <PdfUpload
+              compact={hasDocs}
+              onProcessed={handleProcessed}
+              onStatusChange={setUploadStatus}
+            />
+          </AsideCard>
+        </>
+      }
+    >
+      <div className="pane">
+        <div className="pane-head">
+          <div className="min-w-0">
+            <h2 className="section-title">Chat</h2>
+            {selected && (
+              <p className="truncate text-xs text-muted">
+                Answers come from {selected.original_name}
+              </p>
+            )}
+          </div>
           {ready && messages.length > 0 && (
-            <button
-              type="button"
-              onClick={handleClear}
-              className="rounded-md px-2 py-1 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
-            >
+            <button type="button" onClick={() => void handleClear()} className="btn-ghost -mr-2">
               Clear conversation
             </button>
           )}
         </div>
 
-        {/* Conversation */}
-        <div
-          className="max-h-[26rem] min-h-[8rem] space-y-3 overflow-y-auto pr-1"
-          role="log"
-          aria-live="polite"
-          aria-label="Conversation"
-        >
-          {!ready ? (
-            <EmptyState status={uploadStatus} />
-          ) : messages.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-400">
-              No messages yet. Ask your first question below.
-            </p>
-          ) : (
-            messages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
-            ))
-          )}
+        <div className="pane-scroll">
+          <div className="chat-log" role="log" aria-live="polite" aria-label="Conversation">
+            {loadingMessages ? (
+              <div className="space-y-4" role="status" aria-label="Loading conversation">
+                <div className="skeleton ml-auto h-10 w-2/3" />
+                <div className="skeleton h-20 w-5/6" />
+              </div>
+            ) : selected && selected.processing_status === "failed" ? (
+              <EmptyNote>
+                We couldn't read this PDF. It may be scanned or image-only. Delete it and try
+                another file.
+              </EmptyNote>
+            ) : !ready ? (
+              <EmptyState status={uploadStatus} />
+            ) : messages.length === 0 ? (
+              <EmptyNote>No messages yet. Ask your first question below.</EmptyNote>
+            ) : (
+              messages.map((message) => <MessageBubble key={message.id} message={message} />)
+            )}
 
-          {busy && (
-            <div
-              className="mr-auto max-w-[85%] rounded-2xl bg-slate-100 px-4 py-2 text-sm text-slate-500"
-              role="status"
-            >
-              <span className="inline-flex items-center gap-2">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-orange-400" />
-                {stage === "searching"
-                  ? "Searching your PDF…"
-                  : "Generating answer…"}
-              </span>
-            </div>
-          )}
+            {busy && (
+              <TypingIndicator>
+                {stage === "searching" ? "Searching your PDF…" : "Generating answer…"}
+              </TypingIndicator>
+            )}
 
-          <div ref={endRef} />
+            <div ref={endRef} />
+          </div>
         </div>
 
-        {error && (
-          <p className="mt-3 text-sm text-red-600" role="alert">
-            {error}
-          </p>
-        )}
-
-        {/* Composer */}
-        <div className="mt-4 flex items-end gap-2">
-          <textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={!ready || busy}
-            rows={1}
-            aria-label="Ask a question about your PDF"
-            placeholder={
-              ready
-                ? "Ask a question…  (Enter to send, Shift+Enter for a new line)"
-                : "Upload a PDF to start chatting"
-            }
-            className="max-h-32 min-h-[2.75rem] flex-1 resize-y rounded-lg border border-slate-300 px-4 py-2.5 text-sm leading-relaxed outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
-          />
-          <button
-            type="button"
-            onClick={() => void handleSend()}
-            disabled={!ready || busy || !input.trim()}
-            className="rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
-          >
-            {busy ? "…" : "Send"}
-          </button>
+        <div className="pane-foot">
+          <div className="mx-auto w-full max-w-reading">
+            {error && <ErrorNotice className="mb-3">{error}</ErrorNotice>}
+            <div className="composer">
+              <textarea
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={!ready || busy}
+                rows={1}
+                aria-label="Ask a question about your PDF"
+                placeholder={
+                  ready ? "Ask a question about your PDF…" : "Upload a PDF to start chatting"
+                }
+                className="composer-input"
+              />
+              <button
+                type="button"
+                onClick={() => void handleSend()}
+                disabled={!ready || busy || !input.trim()}
+                className="composer-send"
+              >
+                {busy && <span className="spinner" aria-hidden="true" />}
+                Send
+              </button>
+            </div>
+            <p className="mt-2 hidden text-center text-xs text-faint sm:block">
+              Enter to send, Shift + Enter for a new line
+            </p>
+          </div>
         </div>
       </div>
-    </div>
+    </Workspace>
   );
 }
 
@@ -250,13 +384,9 @@ function EmptyState({ status }: { status: UploadStatus }) {
         ? "Preparing your PDF… this may take a moment."
         : status === "failed"
           ? "We couldn't prepare that PDF. Please try uploading it again."
-          : "No PDF yet. Upload one above to start a conversation.";
+          : "No PDF yet. Upload one to start a conversation.";
 
-  return (
-    <div className="flex h-full min-h-[8rem] flex-col items-center justify-center gap-2 py-8 text-center">
-      <p className="text-sm text-slate-500">{message}</p>
-    </div>
-  );
+  return <EmptyNote>{message}</EmptyNote>;
 }
 
 /** A single chat bubble, with citations for grounded AI answers. */
@@ -264,15 +394,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
   return (
     <div className={isUser ? "flex justify-end" : "flex justify-start"}>
-      <div
-        className={
-          "max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2 text-sm leading-relaxed " +
-          (isUser
-            ? "bg-orange-500 text-white"
-            : "bg-slate-100 text-slate-800")
-        }
-      >
-        {message.text}
+      <div className={isUser ? "bubble-user" : "bubble-assistant"}>
+        {isUser ? message.text : <Markdown>{message.text}</Markdown>}
         {!isUser && message.citations && message.citations.length > 0 && (
           <Citations citations={message.citations} />
         )}
@@ -293,14 +416,19 @@ function Citations({ citations }: { citations: Citation[] }) {
   );
 
   return (
-    <div className="mt-2 border-t border-slate-200 pt-2">
+    <div className="mt-3 whitespace-normal border-t border-line pt-3">
       <div className="flex flex-wrap items-center gap-1.5">
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
           aria-expanded={expanded}
-          className="rounded-md px-1.5 py-0.5 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-200"
+          className="mr-1 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted transition-colors hover:bg-sunken hover:text-ink"
         >
+          <IconChevronRight
+            className={
+              "h-3.5 w-3.5 transition-transform duration-150 " + (expanded ? "rotate-90" : "")
+            }
+          />
           {expanded ? "Hide sources" : `Sources (${citations.length})`}
         </button>
         {pages.map((page) => (
@@ -308,7 +436,7 @@ function Citations({ citations }: { citations: Citation[] }) {
             key={page}
             type="button"
             onClick={() => setExpanded(true)}
-            className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700 transition-colors hover:bg-orange-200"
+            className="chip"
           >
             Page {page}
           </button>
@@ -316,13 +444,10 @@ function Citations({ citations }: { citations: Citation[] }) {
       </div>
 
       {expanded && (
-        <ul className="mt-2 space-y-1">
+        <ul className="mt-2.5 space-y-1.5 border-l-2 border-accent-line pl-3">
           {citations.map((citation) => (
-            <li
-              key={citation.chunk_id}
-              className="text-xs text-slate-500"
-            >
-              <span className="font-medium text-slate-600">
+            <li key={citation.chunk_id} className="text-xs leading-relaxed text-muted">
+              <span className="font-medium text-ink-soft">
                 {citation.page != null ? `Page ${citation.page}` : "Source"}
               </span>
               {" — "}

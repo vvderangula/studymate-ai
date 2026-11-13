@@ -1,10 +1,22 @@
-"""Shared pytest fixtures for integration tests."""
+"""Shared pytest fixtures for integration tests.
+
+Tests never touch the real MongoDB: an in-memory database (mongomock) is
+installed before the app is imported, and replaced with a fresh one for
+every test.
+"""
 
 import uuid
-import pytest
-from fastapi.testclient import TestClient
 
-from app.main import app
+import mongomock
+import pytest
+
+from app.core.database import init_db, use_database
+
+use_database(mongomock.MongoClient(tz_aware=True)["studymate_test"])
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.main import app  # noqa: E402
 
 _client = TestClient(app)
 
@@ -25,3 +37,12 @@ def auth_token() -> str:
 def auth_headers(auth_token: str) -> dict:
     """Return Authorization headers for a fresh test user."""
     return {"Authorization": f"Bearer {auth_token}"}
+
+
+@pytest.fixture(autouse=True)
+def fresh_database():
+    """Give every test its own empty in-memory database."""
+
+    use_database(mongomock.MongoClient(tz_aware=True)["studymate_test"])
+    init_db()
+    yield

@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 import pytest
 
 from app.core.config import settings
-from app.core.database import init_db
 from app.models.youtube import YoutubeMetadata
 from app.repositories.youtube_repository import YoutubeMetadataRepository
 
@@ -14,8 +13,6 @@ from app.repositories.youtube_repository import YoutubeMetadataRepository
 def env(tmp_path, monkeypatch):
     """Isolate the database per test."""
 
-    monkeypatch.setattr(settings, "database_path", str(tmp_path / "test.db"))
-    init_db()
 
 
 def _record(video_id: str, user_id: str) -> YoutubeMetadata:
@@ -34,8 +31,8 @@ def _record(video_id: str, user_id: str) -> YoutubeMetadata:
     )
 
 
-def test_upsert_conflict_updates_video_owner(env) -> None:
-    """Reprocessing an existing video id must update ownership to current user."""
+def test_same_video_belongs_to_each_user_separately(env) -> None:
+    """Two users processing one video each keep their own record."""
 
     repo = YoutubeMetadataRepository()
     video_id = "samevideo123"
@@ -43,9 +40,17 @@ def test_upsert_conflict_updates_video_owner(env) -> None:
     repo.upsert(_record(video_id, "user-a"))
     repo.upsert(_record(video_id, "user-b"))
 
-    stored = repo.get(video_id)
-    assert stored is not None
-    assert stored.user_id == "user-b"
-
-    assert all(item.video_id != video_id for item in repo.list_by_user("user-a"))
+    assert YoutubeMetadataRepository(user_id="user-a").get(video_id).user_id == "user-a"
+    assert YoutubeMetadataRepository(user_id="user-b").get(video_id).user_id == "user-b"
+    assert any(item.video_id == video_id for item in repo.list_by_user("user-a"))
     assert any(item.video_id == video_id for item in repo.list_by_user("user-b"))
+
+
+def test_reprocessing_updates_the_same_record(env) -> None:
+    """Processing a video again updates that user's record, not a duplicate."""
+
+    repo = YoutubeMetadataRepository()
+    repo.upsert(_record("vid1", "user-a"))
+    repo.upsert(_record("vid1", "user-a"))
+
+    assert len(repo.list_by_user("user-a")) == 1

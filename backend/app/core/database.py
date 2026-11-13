@@ -1,134 +1,106 @@
-"""SQLite database connection and schema initialization.
+"""MongoDB connection and collection setup.
 
-Provides the low-level connection factory used by the repository layer.
-Higher layers must access persistence only through repositories, never
+Owns the single shared ``MongoClient`` and the index definitions. Higher
+layers access data only through repositories (``app/repositories``), never
 through this module directly.
 """
 
-import sqlite3
-from pathlib import Path
+from __future__ import annotations
+
+import logging
+
+from pymongo import ASCENDING, DESCENDING, MongoClient
+from pymongo.database import Database
 
 from app.core.config import settings
 
-_CREATE_PDF_DOCUMENTS = """
-CREATE TABLE IF NOT EXISTS pdf_documents (
-    id TEXT PRIMARY KEY,
-    filename TEXT NOT NULL,
-    original_name TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    upload_time TEXT NOT NULL,
-    status TEXT NOT NULL,
-    user_id TEXT,
-    processing_status TEXT NOT NULL DEFAULT 'pending',
-    processed_at TEXT,
-    page_count INTEGER,
-    chunk_count INTEGER
-)
-"""
-
-# Columns added after the initial schema, applied to existing databases.
-_PDF_DOCUMENTS_ADDED_COLUMNS = {
-    "processing_status": "TEXT NOT NULL DEFAULT 'pending'",
-    "processed_at": "TEXT",
-    "page_count": "INTEGER",
-    "chunk_count": "INTEGER",
-}
-
-_CREATE_YOUTUBE_VIDEOS = """
-CREATE TABLE IF NOT EXISTS youtube_videos (
-    video_id TEXT PRIMARY KEY,
-    url TEXT NOT NULL,
-    title TEXT NOT NULL,
-    duration INTEGER,
-    thumbnail TEXT,
-    created_at TEXT,
-    user_id TEXT,
-    processing_status TEXT NOT NULL DEFAULT 'pending',
-    processed_at TEXT,
-    chunk_count INTEGER
-)
-"""
-
-_YOUTUBE_VIDEOS_ADDED_COLUMNS = {
-    "user_id": "TEXT",
-}
-
-_CREATE_USERS = """
-CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    full_name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL
-)
-"""
-
-_CREATE_ACTIVITY_LOG = """
-CREATE TABLE IF NOT EXISTS activity_log (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    resource_id TEXT,
-    resource_title TEXT,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(id)
-)
-"""
+logger = logging.getLogger(__name__)
 
 
-def connect() -> sqlite3.Connection:
-    """Open a SQLite connection to the configured database file.
+class Collections:
+    """Collection names, in one place."""
 
-    The parent directory is created if it does not yet exist. Rows are
-    returned as ``sqlite3.Row`` for name-based access.
-    """
+    USERS = "users"
+    ACTIVITY = "activity_log"
+    PDFS = "pdf_documents"
+    VIDEOS = "youtube_videos"
+    CHUNKS = "chunks"
+    CONVERSATIONS = "conversations"
+    MESSAGES = "messages"
+    QUIZZES = "quizzes"
+    NOTES = "notes"
+    PAPER_SEARCHES = "paper_searches"
+    SAVED_PAPERS = "saved_papers"
 
-    path = Path(settings.database_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path, check_same_thread=False)
-    connection.row_factory = sqlite3.Row
-    return connection
+
+_client: MongoClient | None = None
+_override: Database | None = None
+
+
+def get_db() -> Database:
+    """Return the application database, connecting on first use."""
+
+    global _client
+    if _override is not None:
+        return _override
+    if _client is None:
+        if not settings.mongodb_uri:
+            raise RuntimeError(
+                "MONGODB_URI is not set. Add your MongoDB connection string to backend/.env."
+            )
+        _client = MongoClient(
+            settings.mongodb_uri,
+            tz_aware=True,
+            serverSelectionTimeoutMS=10_000,
+            appname="studymate-ai",
+        )
+    return _client.get_default_database(default=settings.mongodb_db)
+
+
+def use_database(database: Database | None) -> None:
+    """Point the app at another database (tests use an in-memory one)."""
+
+    global _override
+    _override = database
 
 
 def init_db() -> None:
-    """Create database tables and apply column migrations if needed."""
+    """Create indexes. Idempotent; safe to run on every start."""
 
-    connection = connect()
-    try:
-        connection.execute(_CREATE_USERS)
-        connection.execute(_CREATE_ACTIVITY_LOG)
-        connection.execute(_CREATE_PDF_DOCUMENTS)
-        _migrate_pdf_documents(connection)
-        connection.execute(_CREATE_YOUTUBE_VIDEOS)
-        _migrate_youtube_videos(connection)
-        connection.commit()
-    finally:
-        connection.close()
+    db = get_db()
+    db[Collections.USERS].create_index("email", unique=True)
 
+    db[Collections.ACTIVITY].create_index([("user_id", ASCENDING), ("created_at", DESCENDING)])
+    db[Collections.ACTIVITY].create_index([("user_id", ASCENDING), ("event_type", ASCENDING)])
 
-def _migrate_pdf_documents(connection: sqlite3.Connection) -> None:
-    """Add any missing ``pdf_documents`` columns to an existing table."""
+    db[Collections.PDFS].create_index([("user_id", ASCENDING), ("upload_time", DESCENDING)])
 
-    existing = {
-        row["name"]
-        for row in connection.execute("PRAGMA table_info(pdf_documents)")
-    }
-    for column, ddl in _PDF_DOCUMENTS_ADDED_COLUMNS.items():
-        if column not in existing:
-            connection.execute(
-                f"ALTER TABLE pdf_documents ADD COLUMN {column} {ddl}"
-            )
+    # One record per user per video: two people can study the same video.
+    db[Collections.VIDEOS].create_index(
+        [("user_id", ASCENDING), ("video_id", ASCENDING)], unique=True
+    )
+    db[Collections.VIDEOS].create_index("video_id")
 
+    db[Collections.CHUNKS].create_index(
+        [("source_id", ASCENDING), ("index", ASCENDING)], unique=True
+    )
 
-def _migrate_youtube_videos(connection: sqlite3.Connection) -> None:
-    """Add any missing ``youtube_videos`` columns to an existing table."""
+    db[Collections.CONVERSATIONS].create_index(
+        [("user_id", ASCENDING), ("kind", ASCENDING), ("updated_at", DESCENDING)]
+    )
+    db[Collections.CONVERSATIONS].create_index(
+        [("user_id", ASCENDING), ("kind", ASCENDING), ("source_id", ASCENDING)]
+    )
+    db[Collections.MESSAGES].create_index(
+        [("conversation_id", ASCENDING), ("created_at", ASCENDING)]
+    )
 
-    existing = {
-        row["name"]
-        for row in connection.execute("PRAGMA table_info(youtube_videos)")
-    }
-    for column, ddl in _YOUTUBE_VIDEOS_ADDED_COLUMNS.items():
-        if column not in existing:
-            connection.execute(
-                f"ALTER TABLE youtube_videos ADD COLUMN {column} {ddl}"
-            )
+    for name in (Collections.QUIZZES, Collections.NOTES, Collections.PAPER_SEARCHES):
+        db[name].create_index([("user_id", ASCENDING), ("created_at", DESCENDING)])
+
+    db[Collections.SAVED_PAPERS].create_index(
+        [("user_id", ASCENDING), ("paper_id", ASCENDING)], unique=True
+    )
+    db[Collections.SAVED_PAPERS].create_index([("user_id", ASCENDING), ("updated_at", DESCENDING)])
+
+    logger.info("MongoDB ready (database '%s')", db.name)

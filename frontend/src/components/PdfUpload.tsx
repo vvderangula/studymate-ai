@@ -7,6 +7,8 @@ import {
   type ProcessResult,
   type UploadResult,
 } from "../api/pdf";
+import { IconUpload } from "./icons";
+import { ErrorNotice, ProgressNotice, SuccessNotice } from "./ui";
 
 type Status = "idle" | "uploading" | "success" | "error";
 type ProcessStatus = "idle" | "processing" | "done" | "failed";
@@ -15,11 +17,13 @@ const ACCEPTED_TYPE = "application/pdf";
 
 interface PdfUploadProps {
   /** Called when a PDF has been uploaded and fully processed. */
-  onProcessed?: (fileId: string, result: ProcessResult) => void;
+  onProcessed?: (fileId: string, result: ProcessResult, name: string) => void;
   /** Called as the upload/processing lifecycle status changes. */
   onStatusChange?: (
     status: "idle" | "uploading" | "processing" | "ready" | "failed",
   ) => void;
+  /** Slim single-row variant shown once a document is already loaded. */
+  compact?: boolean;
 }
 
 /**
@@ -27,7 +31,7 @@ interface PdfUploadProps {
  * and success / error feedback. After a successful upload it automatically
  * runs the processing pipeline, reporting progress and offering a retry.
  */
-export default function PdfUpload({ onProcessed, onStatusChange }: PdfUploadProps) {
+export default function PdfUpload({ onProcessed, onStatusChange, compact = false }: PdfUploadProps) {
   const [status, setStatus] = useState<Status>("idle");
   const [progress, setProgress] = useState(0);
   const [dragActive, setDragActive] = useState(false);
@@ -58,7 +62,7 @@ export default function PdfUpload({ onProcessed, onStatusChange }: PdfUploadProp
       const uploaded = await uploadPdf(file, setProgress);
       setResult(uploaded);
       setStatus("success");
-      void startProcessing(uploaded.id);
+      void startProcessing(uploaded.id, uploaded.original_name);
     } catch (err) {
       setStatus("error");
       setError(err instanceof ApiError ? err.message : "Upload failed.");
@@ -66,7 +70,7 @@ export default function PdfUpload({ onProcessed, onStatusChange }: PdfUploadProp
     }
   }
 
-  async function startProcessing(fileId: string) {
+  async function startProcessing(fileId: string, name = result?.original_name ?? "") {
     setProcessStatus("processing");
     setProcessError("");
     setProcessResult(null);
@@ -77,7 +81,7 @@ export default function PdfUpload({ onProcessed, onStatusChange }: PdfUploadProp
       setProcessResult(processed);
       setProcessStatus("done");
       onStatusChange?.("ready");
-      onProcessed?.(fileId, processed);
+      onProcessed?.(fileId, processed, name);
     } catch (err) {
       setProcessStatus("failed");
       setProcessError(
@@ -114,42 +118,62 @@ export default function PdfUpload({ onProcessed, onStatusChange }: PdfUploadProp
   }
 
   const isUploading = status === "uploading";
+  const busy = isUploading || processStatus === "processing";
+
+  const openPicker = () => {
+    if (!busy) inputRef.current?.click();
+  };
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div>
       <div
         role="button"
         tabIndex={0}
         aria-label="Upload PDF by dragging a file here or pressing to browse"
+        aria-disabled={busy}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
-        onClick={() => inputRef.current?.click()}
+        onClick={openPicker}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            inputRef.current?.click();
+            openPicker();
           }
         }}
         className={
-          "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors " +
+          "flex cursor-pointer rounded-panel border border-dashed transition-colors duration-150 " +
+          (compact
+            ? "items-center gap-3 px-4 py-3 text-left "
+            : "flex-col items-center justify-center gap-2 px-6 py-10 text-center ") +
           (dragActive
-            ? "border-orange-400 bg-orange-50"
-            : "border-slate-300 hover:border-orange-300")
+            ? "border-accent bg-accent-soft"
+            : "border-line-strong bg-canvas hover:border-accent/60 hover:bg-accent-soft/40")
         }
       >
-        <p className="text-sm font-medium text-slate-700">
-          Drag &amp; drop your PDF here
-        </p>
-        <p className="text-xs text-slate-400">or</p>
+        <IconUpload
+          className={
+            "shrink-0 transition-colors " +
+            (compact ? "h-5 w-5 " : "mb-1 h-6 w-6 ") +
+            (dragActive ? "text-accent" : "text-faint")
+          }
+        />
+        <div className={compact ? "min-w-0 flex-1" : ""}>
+          <p className="text-sm font-medium text-ink">
+            {compact ? "Replace with another PDF" : "Drag & drop your PDF here"}
+          </p>
+          <p className="text-xs text-muted">
+            {compact ? "Drop a file here or browse" : "PDF with selectable text, up to 25 MB"}
+          </p>
+        </div>
         <button
           type="button"
-          disabled={isUploading}
+          disabled={busy}
           onClick={(event) => {
             event.stopPropagation();
-            inputRef.current?.click();
+            openPicker();
           }}
-          className="rounded-lg bg-orange-500 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
+          className={compact ? "btn-quiet" : "btn-secondary mt-2"}
         >
           Browse files
         </button>
@@ -163,60 +187,60 @@ export default function PdfUpload({ onProcessed, onStatusChange }: PdfUploadProp
         />
       </div>
 
-      {isUploading && (
-        <div className="mt-4" aria-live="polite">
-          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-            <div
-              className="h-full rounded-full bg-orange-500 transition-all"
-              style={{ width: `${progress}%` }}
-              role="progressbar"
-              aria-valuenow={progress}
-              aria-valuemin={0}
-              aria-valuemax={100}
-            />
-          </div>
-          <p className="mt-2 text-xs text-slate-500">Uploading… {progress}%</p>
-        </div>
-      )}
+      {(isUploading ||
+        (status === "success" && result) ||
+        status === "error" ||
+        processStatus !== "idle") && (
+        <div className="mt-3 space-y-2" aria-live="polite">
+          {isUploading && (
+            <div>
+              <div className="flex items-center justify-between text-xs text-muted">
+                <span>Uploading…</span>
+                <span className="tabular-nums">{progress}%</span>
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-sunken">
+                <div
+                  className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
+                  style={{ width: `${progress}%` }}
+                  role="progressbar"
+                  aria-valuenow={progress}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                />
+              </div>
+            </div>
+          )}
 
-      {status === "success" && result && (
-        <p className="mt-4 text-sm text-green-600" role="status">
-          "{result.original_name}" uploaded successfully.
-        </p>
-      )}
+          {status === "success" && result && (
+            <SuccessNotice>"{result.original_name}" uploaded successfully.</SuccessNotice>
+          )}
 
-      {status === "error" && (
-        <p className="mt-4 text-sm text-red-600" role="alert">
-          {error}
-        </p>
-      )}
+          {status === "error" && <ErrorNotice>{error}</ErrorNotice>}
 
-      {processStatus === "processing" && (
-        <p className="mt-2 text-sm text-slate-500" role="status">
-          Processing…
-        </p>
-      )}
+          {processStatus === "processing" && (
+            <ProgressNotice>Reading and indexing your PDF…</ProgressNotice>
+          )}
 
-      {processStatus === "done" && processResult && (
-        <p className="mt-2 text-sm text-green-600" role="status">
-          Processing complete. {processResult.page_count ?? 0} pages,{" "}
-          {processResult.chunk_count ?? 0} chunks.
-        </p>
-      )}
+          {processStatus === "done" && processResult && (
+            <SuccessNotice>
+              Processing complete. {processResult.page_count ?? 0} pages,{" "}
+              {processResult.chunk_count ?? 0} chunks.
+            </SuccessNotice>
+          )}
 
-      {processStatus === "failed" && (
-        <div className="mt-2">
-          <p className="text-sm text-red-600" role="alert">
-            {processError || "Processing failed."}
-          </p>
-          {result && (
-            <button
-              type="button"
-              onClick={() => void startProcessing(result.id)}
-              className="mt-2 rounded-lg bg-orange-500 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
-            >
-              Retry
-            </button>
+          {processStatus === "failed" && (
+            <div className="space-y-2">
+              <ErrorNotice>{processError || "Processing failed."}</ErrorNotice>
+              {result && (
+                <button
+                  type="button"
+                  onClick={() => void startProcessing(result.id)}
+                  className="btn-secondary w-full"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

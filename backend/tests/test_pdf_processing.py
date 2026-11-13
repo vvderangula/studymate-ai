@@ -6,11 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
-from app.core.database import init_db
 from app.main import app
 from app.models.pdf import PdfMetadata
 from app.repositories.pdf_repository import PdfMetadataRepository
-from app.services.chunk_storage import ChunkStorageService
+from app.repositories.chunk_repository import ChunkRepository
 from app.services.pdf_extractor import PDFExtractionError, PDFExtractor
 from app.services.pdf_processing_service import (
     ProcessingConfig,
@@ -48,15 +47,12 @@ def env(tmp_path, monkeypatch):
 
     upload_dir = tmp_path / "uploads"
     monkeypatch.setattr(settings, "upload_dir", str(upload_dir))
-    monkeypatch.setattr(settings, "chunks_dir", str(tmp_path / "chunks"))
-    monkeypatch.setattr(settings, "database_path", str(tmp_path / "test.db"))
     monkeypatch.setattr(settings, "chunk_size", 50)
     monkeypatch.setattr(settings, "chunk_overlap", 10)
-    init_db()
     return {"upload_dir": upload_dir}
 
 
-def _seed_record(file_id: str = "doc1") -> PdfMetadata:
+def _seed_record(file_id: str = "doc1", user_id: str | None = None) -> PdfMetadata:
     """Insert a pending PDF record and return it."""
 
     record = PdfMetadata(
@@ -67,6 +63,7 @@ def _seed_record(file_id: str = "doc1") -> PdfMetadata:
         upload_time=datetime.now(timezone.utc),
         status="uploaded",
         processing_status="pending",
+        user_id=user_id,
     )
     PdfMetadataRepository().create(record)
     return record
@@ -80,7 +77,7 @@ def _build_service(pages=None, error=False) -> ProcessingService:
             storage=PDFStorageService(),
             extractor=_StubExtractor(pages=pages, error=error),
             chunker=TextChunker(),
-            chunk_storage=ChunkStorageService(),
+            chunk_storage=ChunkRepository(),
             repository=PdfMetadataRepository(),
         )
     )
@@ -100,7 +97,7 @@ def test_process_valid_pdf_completes(env) -> None:
     assert result.page_count == 2
     assert result.chunk_count is not None and result.chunk_count >= 1
 
-    stored_chunks = ChunkStorageService().load("doc1")
+    stored_chunks = ChunkRepository().load("doc1")
     assert stored_chunks is not None
     assert len(stored_chunks) == result.chunk_count
 
@@ -160,7 +157,7 @@ def test_process_normalizes_whitespace_in_chunks(env) -> None:
 
     service.process("doc5")
 
-    chunks = ChunkStorageService().load("doc5")
+    chunks = ChunkRepository().load("doc5")
     assert chunks is not None
     assert chunks[0] == "messy text here end"
 
@@ -209,13 +206,16 @@ client = TestClient(app)
 def api_env(tmp_path, monkeypatch):
     """Isolate storage/database and override the processing dependency."""
 
-    from app.api.routes.pdf import get_processing_service
+    from app.api.routes.pdf import get_pdf_indexer, get_processing_service
+
+    class _NoopIndexer:
+        def reindex(self, file_id: str) -> int:
+            return 1
+
+    app.dependency_overrides[get_pdf_indexer] = lambda: _NoopIndexer()
 
     upload_dir = tmp_path / "uploads"
     monkeypatch.setattr(settings, "upload_dir", str(upload_dir))
-    monkeypatch.setattr(settings, "chunks_dir", str(tmp_path / "chunks"))
-    monkeypatch.setattr(settings, "database_path", str(tmp_path / "test.db"))
-    init_db()
 
     def _override(pages=None, error=False):
         app.dependency_overrides[get_processing_service] = lambda: _build_service(
@@ -226,10 +226,20 @@ def api_env(tmp_path, monkeypatch):
     app.dependency_overrides.clear()
 
 
+def _owner(headers: dict) -> str:
+    """Return the user id behind a test bearer token."""
+
+    from app.repositories.user_repository import UserRepository
+    from app.services.auth_service import AuthService
+
+    token = headers["Authorization"].split(" ", 1)[1]
+    return AuthService(UserRepository()).verify_token(token)
+
+
 def test_api_process_valid_returns_metadata(api_env, auth_headers) -> None:
     """A successful process call should return 200 with processing metadata."""
 
-    _seed_record("api1")
+    _seed_record("api1", _owner(auth_headers))
     _write_pdf(api_env["upload_dir"], "api1")
     api_env["override"](pages=["Readable page text."])
 
@@ -246,7 +256,7 @@ def test_api_process_valid_returns_metadata(api_env, auth_headers) -> None:
 def test_api_process_corrupted_returns_422(api_env, auth_headers) -> None:
     """A corrupted PDF should yield a 422 response."""
 
-    _seed_record("api2")
+    _seed_record("api2", _owner(auth_headers))
     _write_pdf(api_env["upload_dir"], "api2")
     api_env["override"](error=True)
 

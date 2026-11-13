@@ -10,7 +10,7 @@ duplicated and models are not invoked unnecessarily.
 import logging
 import re
 
-from app.services.chunk_storage import ChunkStorageService
+from app.repositories.chunk_repository import ChunkRepository
 from app.services.embeddings.base import EmbeddingService
 from app.services.pdf_extractor import PDFExtractionError, PDFExtractor
 from app.services.pdf_storage import PDFStorageService
@@ -40,7 +40,7 @@ class PdfEmbeddingService:
         self,
         storage: PDFStorageService,
         extractor: PDFExtractor,
-        chunk_storage: ChunkStorageService,
+        chunk_storage: ChunkRepository,
         embeddings: EmbeddingService,
         chroma: ChromaService,
     ) -> None:
@@ -92,6 +92,16 @@ class PdfEmbeddingService:
         )
         logger.info("Embedded %d chunks for %s", len(chunks), file_id)
         return len(chunks)
+
+    def reindex(self, file_id: str) -> int:
+        """Drop any existing vectors for the PDF and embed its chunks again.
+
+        Called right after processing so chat never has to embed on the
+        first question, and re-processing a PDF refreshes its index.
+        """
+
+        self._chroma.delete_document(file_id)
+        return self.ensure_indexed(file_id)
 
     def _page_numbers(self, file_id: str, chunks: list[str]) -> list[int]:
         """Map each chunk to the source page it begins on.

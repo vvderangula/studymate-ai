@@ -47,3 +47,25 @@ class ChatResponse(BaseModel):
     answer: str
     citations: list[Citation]
     metadata: dict
+    conversation_id: str | None = None
+
+
+class DocumentItem(BaseModel):
+    """A PDF in the user's library, with its chat activity."""
+
+    id: str
+    original_name: str
+    size: int
+    upload_time: datetime
+    processing_status: str
+    processed_at: datetime | None = None
+    page_count: int | None = None
+    chunk_count: int | None = None
+    message_count: int = 0
+    last_active: datetime
+
+
+class DocumentsResponse(BaseModel):
+    """Every PDF the user uploaded, most recently active first."""
+
+    documents: list[DocumentItem]

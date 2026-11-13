@@ -71,3 +71,23 @@ export function authHeaders(extra: Record<string, string> = {}): Record<string, 
   }
   return headers;
 }
+
+/**
+ * JSON request to the API with the stored auth token.
+ * Throws ApiError on a non-OK response; resolves to undefined for 204.
+ */
+export async function request<T>(
+  method: "GET" | "POST" | "DELETE",
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers: authHeaders(body !== undefined ? { "Content-Type": "application/json" } : {}),
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, await readErrorDetail(response));
+  }
+  return (response.status === 204 ? undefined : await response.json()) as T;
+}

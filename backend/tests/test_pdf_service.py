@@ -6,7 +6,6 @@ import pytest
 from starlette.datastructures import Headers, UploadFile
 
 from app.core.config import settings
-from app.core.database import connect, init_db
 from app.repositories.pdf_repository import PdfMetadataRepository
 from app.services.pdf_service import PdfService
 from app.services.pdf_storage import PDFStorageService, PDFValidationError
@@ -28,8 +27,6 @@ def service(tmp_path, monkeypatch) -> PdfService:
     """Provide a PdfService backed by isolated file and database storage."""
 
     monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
-    monkeypatch.setattr(settings, "database_path", str(tmp_path / "test.db"))
-    init_db()
     return PdfService(PDFStorageService(), PdfMetadataRepository())
 
 
@@ -56,9 +53,4 @@ def test_upload_rejects_invalid_file(service: PdfService) -> None:
     with pytest.raises(PDFValidationError):
         service.upload(_make_upload(b"not a pdf"))
 
-    connection = connect()
-    try:
-        count = connection.execute("SELECT COUNT(*) FROM pdf_documents").fetchone()[0]
-    finally:
-        connection.close()
-    assert count == 0
+    assert PdfMetadataRepository().collection.count_documents({}) == 0

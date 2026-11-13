@@ -76,7 +76,7 @@ def test_chat_route_accepts_valid_message(monkeypatch, auth_headers) -> None:
 
     monkeypatch.setattr(
         route_module,
-        "HuggingFaceLLMService",
+        "create_llm_service",
         lambda: _StubLLM("Photosynthesis is the process…"),
     )
 
@@ -101,7 +101,7 @@ def test_chat_route_passes_history_to_llm(monkeypatch, auth_headers) -> None:
             captured["user_prompt"] = user_prompt
             return "answer"
 
-    monkeypatch.setattr(route_module, "HuggingFaceLLMService", lambda: _CaptureLLM())
+    monkeypatch.setattr(route_module, "create_llm_service", lambda: _CaptureLLM())
 
     response = client.post(
         "/assistant/chat",

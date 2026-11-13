@@ -1,4 +1,5 @@
-import { API_BASE_URL, ApiError, authHeaders, getToken, readErrorDetail } from "./client";
+import { API_BASE_URL, ApiError, authHeaders, getToken, readErrorDetail, request } from "./client";
+import type { MessagesResult } from "./history";
 
 export interface UploadResult {
   id: string;
@@ -28,6 +29,21 @@ export interface ChatResult {
   answer: string;
   citations: Citation[];
   metadata: Record<string, unknown>;
+  conversation_id?: string | null;
+}
+
+/** A PDF in the user's library. */
+export interface DocumentItem {
+  id: string;
+  original_name: string;
+  size: number;
+  upload_time: string;
+  processing_status: string;
+  processed_at: string | null;
+  page_count: number | null;
+  chunk_count: number | null;
+  message_count: number;
+  last_active: string;
 }
 
 /**
@@ -110,4 +126,25 @@ export async function chatWithPdf(
     throw new ApiError(response.status, await readErrorDetail(response));
   }
   return response.json();
+}
+
+/** Every PDF the user uploaded, most recently active first. */
+export async function listDocuments(): Promise<DocumentItem[]> {
+  const result = await request<{ documents: DocumentItem[] }>("GET", "/pdf/documents");
+  return result.documents;
+}
+
+/** The saved conversation about one PDF. */
+export function getPdfMessages(fileId: string): Promise<MessagesResult> {
+  return request("GET", `/pdf/${fileId}/messages`);
+}
+
+/** Clear the saved conversation about one PDF. */
+export function clearPdfMessages(fileId: string): Promise<void> {
+  return request("DELETE", `/pdf/${fileId}/messages`);
+}
+
+/** Delete a PDF with its text, index and conversation. */
+export function deleteDocument(fileId: string): Promise<void> {
+  return request("DELETE", `/pdf/${fileId}`);
 }

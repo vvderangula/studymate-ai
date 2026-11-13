@@ -1,56 +1,39 @@
-"""Repository for persisting and retrieving PDF document metadata."""
+"""Repository for PDF document metadata."""
 
-import sqlite3
-from collections.abc import Callable
+from __future__ import annotations
+
 from datetime import datetime
 
-from app.core.database import connect
+from pymongo import DESCENDING
+
+from app.core.database import Collections
 from app.models.pdf import PdfMetadata
+from app.repositories.base import MongoRepository, as_utc
 
 
-class PdfMetadataRepository:
-    """Data-access layer for ``pdf_documents``.
+class PdfMetadataRepository(MongoRepository):
+    """The only component that reads or writes ``pdf_documents``."""
 
-    This is the only component permitted to read from or write to the
-    PDF metadata table. A connection factory is injected to keep the
-    repository testable against an isolated database.
-    """
-
-    def __init__(
-        self,
-        connection_factory: Callable[[], sqlite3.Connection] = connect,
-    ) -> None:
-        self._connect = connection_factory
+    collection_name = Collections.PDFS
 
     def create(self, record: PdfMetadata) -> None:
-        """Insert a new PDF metadata record."""
+        """Insert a new PDF record."""
 
-        connection = self._connect()
-        try:
-            connection.execute(
-                """
-                INSERT INTO pdf_documents (
-                    id, filename, original_name, size, upload_time, status,
-                    user_id, processing_status, processed_at, page_count, chunk_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    record.id,
-                    record.filename,
-                    record.original_name,
-                    record.size,
-                    record.upload_time.isoformat(),
-                    record.status,
-                    record.user_id,
-                    record.processing_status,
-                    record.processed_at.isoformat() if record.processed_at else None,
-                    record.page_count,
-                    record.chunk_count,
-                ),
-            )
-            connection.commit()
-        finally:
-            connection.close()
+        self.collection.insert_one(
+            {
+                "_id": record.id,
+                "filename": record.filename,
+                "original_name": record.original_name,
+                "size": record.size,
+                "upload_time": record.upload_time,
+                "status": record.status,
+                "user_id": record.user_id,
+                "processing_status": record.processing_status,
+                "processed_at": record.processed_at,
+                "page_count": record.page_count,
+                "chunk_count": record.chunk_count,
+            }
+        )
 
     def update_processing(
         self,
@@ -63,104 +46,64 @@ class PdfMetadataRepository:
     ) -> None:
         """Update the processing fields for a stored PDF."""
 
-        connection = self._connect()
-        try:
-            connection.execute(
-                """
-                UPDATE pdf_documents
-                SET processing_status = ?,
-                    processed_at = ?,
-                    page_count = ?,
-                    chunk_count = ?
-                WHERE id = ?
-                """,
-                (
-                    processing_status,
-                    processed_at.isoformat() if processed_at else None,
-                    page_count,
-                    chunk_count,
-                    file_id,
-                ),
-            )
-            connection.commit()
-        finally:
-            connection.close()
+        self.collection.update_one(
+            {"_id": file_id},
+            {
+                "$set": {
+                    "processing_status": processing_status,
+                    "processed_at": processed_at,
+                    "page_count": page_count,
+                    "chunk_count": chunk_count,
+                }
+            },
+        )
 
     def get(self, file_id: str) -> PdfMetadata | None:
-        """Return the metadata for ``file_id``, or ``None`` if not found."""
+        """Return the metadata for ``file_id``, or ``None``."""
 
-        connection = self._connect()
-        try:
-            row = connection.execute(
-                """
-                SELECT id, filename, original_name, size, upload_time, status,
-                       user_id, processing_status, processed_at, page_count, chunk_count
-                FROM pdf_documents
-                WHERE id = ?
-                """,
-                (file_id,),
-            ).fetchone()
-        finally:
-            connection.close()
-
-        if row is None:
-            return None
-        return _row_to_metadata(row)
+        return _to_metadata(self.collection.find_one({"_id": file_id}))
 
     def list_processed(self) -> list[PdfMetadata]:
-        """Return all PDFs whose processing has completed, newest first."""
+        """All completed PDFs, newest first."""
 
-        connection = self._connect()
-        try:
-            rows = connection.execute(
-                """
-                SELECT id, filename, original_name, size, upload_time, status,
-                       user_id, processing_status, processed_at, page_count, chunk_count
-                FROM pdf_documents
-                WHERE processing_status = 'completed'
-                ORDER BY processed_at DESC
-                """
-            ).fetchall()
-        finally:
-            connection.close()
-
-        return [_row_to_metadata(row) for row in rows]
+        cursor = self.collection.find({"processing_status": "completed"}).sort(
+            "processed_at", DESCENDING
+        )
+        return [_to_metadata(doc) for doc in cursor]
 
     def list_by_user(self, user_id: str) -> list[PdfMetadata]:
-        """Return completed PDFs owned by the given user, newest first."""
+        """Completed PDFs owned by ``user_id``, newest first."""
 
-        connection = self._connect()
-        try:
-            rows = connection.execute(
-                """
-                SELECT id, filename, original_name, size, upload_time, status,
-                       user_id, processing_status, processed_at, page_count, chunk_count
-                FROM pdf_documents
-                WHERE processing_status = 'completed' AND user_id = ?
-                ORDER BY processed_at DESC
-                """,
-                (user_id,),
-            ).fetchall()
-        finally:
-            connection.close()
+        cursor = self.collection.find(
+            {"processing_status": "completed", "user_id": user_id}
+        ).sort("processed_at", DESCENDING)
+        return [_to_metadata(doc) for doc in cursor]
 
-        return [_row_to_metadata(row) for row in rows]
+    def list_all_by_user(self, user_id: str) -> list[PdfMetadata]:
+        """Every PDF the user uploaded (any status), newest upload first."""
+
+        cursor = self.collection.find({"user_id": user_id}).sort("upload_time", DESCENDING)
+        return [_to_metadata(doc) for doc in cursor]
+
+    def delete(self, file_id: str) -> None:
+        """Remove a PDF record."""
+
+        self.collection.delete_one({"_id": file_id})
 
 
-def _row_to_metadata(row: sqlite3.Row) -> PdfMetadata:
-    """Map a database row to a :class:`PdfMetadata` instance."""
-
-    processed_at = row["processed_at"]
+def _to_metadata(doc: dict | None) -> PdfMetadata | None:
+    if doc is None:
+        return None
     return PdfMetadata(
-        id=row["id"],
-        filename=row["filename"],
-        original_name=row["original_name"],
-        size=row["size"],
-        upload_time=datetime.fromisoformat(row["upload_time"]),
-        status=row["status"],
-        user_id=row["user_id"],
-        processing_status=row["processing_status"],
-        processed_at=datetime.fromisoformat(processed_at) if processed_at else None,
-        page_count=row["page_count"],
-        chunk_count=row["chunk_count"],
+        id=doc["_id"],
+        filename=doc["filename"],
+        original_name=doc["original_name"],
+        size=doc["size"],
+        upload_time=as_utc(doc["upload_time"]),
+        status=doc["status"],
+        user_id=doc.get("user_id"),
+        processing_status=doc.get("processing_status", "pending"),
+        processed_at=as_utc(doc.get("processed_at")),
+        page_count=doc.get("page_count"),
+        chunk_count=doc.get("chunk_count"),
     )

@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from app.models.youtube import YoutubeMetadata
 from app.repositories.youtube_repository import YoutubeMetadataRepository
-from app.services.chunk_storage import ChunkStorageService
+from app.repositories.chunk_repository import ChunkRepository
 from app.services.embeddings.base import EmbeddingService
 from app.services.vector_store.chroma_service import ChromaService
 from app.services.youtube.transcript_service import (
@@ -65,7 +65,7 @@ class YoutubeProcessingService:
         self,
         transcripts: YoutubeTranscriptService,
         chunker,
-        chunk_storage: ChunkStorageService,
+        chunk_storage: ChunkRepository,
         embeddings: EmbeddingService,
         chroma: ChromaService,
         repository: YoutubeMetadataRepository,

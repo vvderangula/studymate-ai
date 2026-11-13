@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -15,10 +16,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def collection_name(file_id: str) -> str:
-    """Return the Chroma collection name for a given PDF file id."""
+def embedding_fingerprint() -> str:
+    """Identify the configured embedding model and vector size."""
 
-    return f"pdf_{file_id}"
+    if settings.embedding_provider.lower() == "huggingface":
+        return f"huggingface:{settings.embedding_model_name}"
+    return (
+        f"gemini:{settings.gemini_embedding_model}:"
+        f"{settings.gemini_embedding_dimensions}"
+    )
+
+
+def collection_name(file_id: str) -> str:
+    """Return the Chroma collection name for a given PDF file id.
+
+    The name carries a short hash of the embedding model, so switching models
+    never mixes vectors of different sizes: the new model gets a fresh, empty
+    collection and the document is re-embedded from its stored chunks.
+    """
+
+    suffix = hashlib.sha1(embedding_fingerprint().encode()).hexdigest()[:8]
+    return f"pdf_{file_id}_{suffix}"
 
 
 class ChromaService:

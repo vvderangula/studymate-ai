@@ -150,3 +150,17 @@ def test_pdf_upload_requires_auth():
     fake_pdf.name = "test.pdf"
     response = client.post("/pdf/upload", files={"file": ("test.pdf", fake_pdf, "application/pdf")})
     assert response.status_code in (401, 403)
+
+
+def test_login_unknown_email_says_no_account():
+    response = _login(email="nobody-here@example.com", password="whatever123")
+    assert response.status_code == 401
+    assert "No account found" in response.json()["detail"]
+
+
+def test_login_wrong_password_says_incorrect_password():
+    email = _unique_email()
+    _register(email=email)
+    response = _login(email=email, password="wrongpassword")
+    assert response.status_code == 401
+    assert response.json()["detail"].startswith("Incorrect password")

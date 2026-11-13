@@ -3,8 +3,10 @@ import { Link, useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { register } from "../api/auth";
 import { useAuth } from "../context/AuthContext";
+import { IconAlert } from "../components/icons";
+import AuthShell from "../components/AuthShell";
 
-/** Register page — matches the StudyMate orange/white design language. */
+/** Register page. */
 export default function RegisterPage() {
   const navigate = useNavigate();
   const { signIn } = useAuth();
@@ -52,108 +54,94 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-4">
-      <div className="w-full max-w-md">
-        {/* Logo / brand */}
-        <div className="mb-5 text-center">
-          <span className="text-2xl font-bold text-orange-500">StudyMate AI</span>
-          <p className="mt-1 text-sm text-slate-500">Your AI-powered personal tutor</p>
+    <AuthShell>
+      <h1 className="text-title text-ink">Create your account</h1>
+      <p className="mt-1 text-sm text-muted">Study from your own PDFs and videos.</p>
+
+      {error && (
+        <div role="alert" className="notice-error mt-6">
+          <IconAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <form onSubmit={(e) => void handleSubmit(e)} noValidate className="mt-6 space-y-4">
+        <div>
+          <label htmlFor="fullName" className="field-label">
+            Full Name
+          </label>
+          <input
+            id="fullName"
+            type="text"
+            autoComplete="name"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            disabled={busy}
+            placeholder="Jane Smith"
+            className="field"
+          />
+        </div>
+        <div>
+          <label htmlFor="email" className="field-label">
+            Email
+          </label>
+          <input
+            id="email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={busy}
+            placeholder="you@example.com"
+            className="field"
+          />
+        </div>
+        <div>
+          <label htmlFor="password" className="field-label">
+            Password
+          </label>
+          <input
+            id="password"
+            type="password"
+            autoComplete="new-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={busy}
+            placeholder="Min. 8 characters"
+            className="field"
+          />
+        </div>
+        <div>
+          <label htmlFor="confirmPassword" className="field-label">
+            Confirm Password
+          </label>
+          <input
+            id="confirmPassword"
+            type="password"
+            autoComplete="new-password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            disabled={busy}
+            placeholder="Repeat your password"
+            className="field"
+          />
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h1 className="mb-4 text-xl font-semibold text-slate-800">Create your account</h1>
+        <button type="submit" disabled={busy} className="btn-primary !mt-6 w-full">
+          {busy && <span className="spinner" aria-hidden="true" />}
+          {busy ? "Creating account…" : "Create Account"}
+        </button>
+      </form>
 
-          {error && (
-            <div
-              role="alert"
-              className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-            >
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={(e) => void handleSubmit(e)} noValidate className="space-y-3">
-            <div>
-              <label htmlFor="fullName" className="mb-1.5 block text-sm font-medium text-slate-700">
-                Full Name
-              </label>
-              <input
-                id="fullName"
-                type="text"
-                autoComplete="name"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                disabled={busy}
-                placeholder="Jane Smith"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-slate-700">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={busy}
-                placeholder="you@example.com"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-slate-700">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                autoComplete="new-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={busy}
-                placeholder="Min. 8 characters"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="confirmPassword" className="mb-1.5 block text-sm font-medium text-slate-700">
-                Confirm Password
-              </label>
-              <input
-                id="confirmPassword"
-                type="password"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                disabled={busy}
-                placeholder="Repeat your password"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="mt-2 w-full rounded-lg bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:opacity-60"
-            >
-              {busy ? "Creating account…" : "Create Account"}
-            </button>
-          </form>
-
-          <p className="mt-4 text-center text-sm text-slate-500">
-            Already have an account?{" "}
-            <Link to="/login" className="font-medium text-orange-500 hover:text-orange-600">
-              Sign in
-            </Link>
-          </p>
-        </div>
-      </div>
-    </div>
+      <p className="mt-6 border-t border-line pt-5 text-center text-sm text-muted">
+        Already have an account?{" "}
+        <Link
+          to="/login"
+          className="rounded font-medium text-accent underline-offset-4 hover:text-accent-hover hover:underline"
+        >
+          Sign in
+        </Link>
+      </p>
+    </AuthShell>
   );
 }

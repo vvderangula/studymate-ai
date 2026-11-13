@@ -3,8 +3,10 @@ import { Link, useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { login } from "../api/auth";
 import { useAuth } from "../context/AuthContext";
+import { IconAlert } from "../components/icons";
+import AuthShell from "../components/AuthShell";
 
-/** Login page — matches the StudyMate orange/white design language. */
+/** Login page. */
 export default function LoginPage() {
   const navigate = useNavigate();
   const { signIn } = useAuth();
@@ -44,76 +46,65 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-md">
-        {/* Logo / brand */}
-        <div className="mb-8 text-center">
-          <span className="text-3xl font-bold text-orange-500">StudyMate AI</span>
-          <p className="mt-1 text-sm text-slate-500">Your AI-powered personal tutor</p>
+    <AuthShell>
+      <h1 className="text-title text-ink">Welcome back</h1>
+      <p className="mt-1 text-sm text-muted">Sign in to pick up where you left off.</p>
+
+      {error && (
+        <div role="alert" className="notice-error mt-6">
+          <IconAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <form onSubmit={(e) => void handleSubmit(e)} noValidate className="mt-6 space-y-4">
+        <div>
+          <label htmlFor="email" className="field-label">
+            Email
+          </label>
+          <input
+            id="email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={busy}
+            placeholder="you@example.com"
+            className="field"
+          />
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-          <h1 className="mb-6 text-xl font-semibold text-slate-800">Welcome back</h1>
-
-          {error && (
-            <div
-              role="alert"
-              className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-            >
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={(e) => void handleSubmit(e)} noValidate className="space-y-4">
-            <div>
-              <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-slate-700">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={busy}
-                placeholder="you@example.com"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-slate-700">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={busy}
-                placeholder="••••••••"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="mt-2 w-full rounded-lg bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:opacity-60"
-            >
-              {busy ? "Signing in…" : "Sign In"}
-            </button>
-          </form>
-
-          <p className="mt-5 text-center text-sm text-slate-500">
-            Don&apos;t have an account?{" "}
-            <Link to="/register" className="font-medium text-orange-500 hover:text-orange-600">
-              Create one
-            </Link>
-          </p>
+        <div>
+          <label htmlFor="password" className="field-label">
+            Password
+          </label>
+          <input
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={busy}
+            placeholder="••••••••"
+            className="field"
+          />
         </div>
-      </div>
-    </div>
+
+        <button type="submit" disabled={busy} className="btn-primary !mt-6 w-full">
+          {busy && <span className="spinner" aria-hidden="true" />}
+          {busy ? "Signing in…" : "Sign In"}
+        </button>
+      </form>
+
+      <p className="mt-6 border-t border-line pt-5 text-center text-sm text-muted">
+        Don&apos;t have an account?{" "}
+        <Link
+          to="/register"
+          className="rounded font-medium text-accent underline-offset-4 hover:text-accent-hover hover:underline"
+        >
+          Create one
+        </Link>
+      </p>
+    </AuthShell>
   );
 }

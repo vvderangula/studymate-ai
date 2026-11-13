@@ -10,6 +10,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 
+from app.core.config import settings
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
 from app.services.auth_service import AuthService
@@ -49,3 +50,18 @@ def get_current_user(
         )
 
     return user
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Allow only users whose email is listed in ADMIN_EMAILS.
+
+    Raises:
+        HTTPException 403: For signed-in users who are not admins.
+    """
+
+    if settings.role_for(current_user.email) != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admins only.",
+        )
+    return current_user

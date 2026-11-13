@@ -1,83 +1,48 @@
-"""Repository for persisting and retrieving user accounts."""
+"""Repository for user accounts."""
 
-import sqlite3
-from collections.abc import Callable
-from datetime import datetime
+from __future__ import annotations
 
-from app.core.database import connect
+from app.core.database import Collections
 from app.models.user import User
+from app.repositories.base import MongoRepository, as_utc
 
 
-class UserRepository:
-    """Data-access layer for the ``users`` table.
+class UserRepository(MongoRepository):
+    """The only component that reads or writes the ``users`` collection."""
 
-    This is the only component permitted to read from or write to the
-    users table. A connection factory is injected to keep the repository
-    testable against an isolated database.
-    """
-
-    def __init__(
-        self,
-        connection_factory: Callable[[], sqlite3.Connection] = connect,
-    ) -> None:
-        self._connect = connection_factory
+    collection_name = Collections.USERS
 
     def create(self, user: User) -> None:
-        """Insert a new user record."""
+        """Insert a new user."""
 
-        connection = self._connect()
-        try:
-            connection.execute(
-                """
-                INSERT INTO users (id, full_name, email, password_hash, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    user.id,
-                    user.full_name,
-                    user.email,
-                    user.password_hash,
-                    user.created_at.isoformat(),
-                ),
-            )
-            connection.commit()
-        finally:
-            connection.close()
+        self.collection.insert_one(
+            {
+                "_id": user.id,
+                "full_name": user.full_name,
+                "email": user.email.lower(),
+                "password_hash": user.password_hash,
+                "created_at": user.created_at,
+            }
+        )
 
     def get(self, user_id: str) -> User | None:
-        """Return the user with the given ``user_id``, or ``None``."""
+        """Return the user with ``user_id``, or ``None``."""
 
-        connection = self._connect()
-        try:
-            row = connection.execute(
-                "SELECT id, full_name, email, password_hash, created_at FROM users WHERE id = ?",
-                (user_id,),
-            ).fetchone()
-        finally:
-            connection.close()
-
-        return _row_to_user(row) if row else None
+        return _to_user(self.collection.find_one({"_id": user_id}))
 
     def get_by_email(self, email: str) -> User | None:
-        """Return the user with the given ``email`` (case-insensitive), or ``None``."""
+        """Return the user with ``email`` (case-insensitive), or ``None``."""
 
-        connection = self._connect()
-        try:
-            row = connection.execute(
-                "SELECT id, full_name, email, password_hash, created_at FROM users WHERE email = ?",
-                (email.lower(),),
-            ).fetchone()
-        finally:
-            connection.close()
-
-        return _row_to_user(row) if row else None
+        return _to_user(self.collection.find_one({"email": email.lower()}))
 
 
-def _row_to_user(row: sqlite3.Row) -> User:
+def _to_user(doc: dict | None) -> User | None:
+    if doc is None:
+        return None
     return User(
-        id=row["id"],
-        full_name=row["full_name"],
-        email=row["email"],
-        password_hash=row["password_hash"],
-        created_at=datetime.fromisoformat(row["created_at"]),
+        id=doc["_id"],
+        full_name=doc["full_name"],
+        email=doc["email"],
+        password_hash=doc["password_hash"],
+        created_at=as_utc(doc["created_at"]),
     )

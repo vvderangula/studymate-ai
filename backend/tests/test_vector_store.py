@@ -53,7 +53,7 @@ class _FakeEmbeddings:
 def test_collection_name_is_prefixed() -> None:
     """Collection names should be namespaced by file id."""
 
-    assert collection_name("abc") == "pdf_abc"
+    assert collection_name("abc").startswith("pdf_abc_")
 
 
 def test_index_chunks_stores_documents_and_returns_count() -> None:

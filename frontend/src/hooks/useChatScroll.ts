@@ -1,20 +1,31 @@
 import { useEffect, useRef } from "react";
 
+/** Nearest ancestor that scrolls vertically, or null. */
+function scrollParent(node: HTMLElement | null): HTMLElement | null {
+  let current = node?.parentElement ?? null;
+  while (current) {
+    const { overflowY } = window.getComputedStyle(current);
+    if (overflowY === "auto" || overflowY === "scroll") return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+
 /**
- * Scrolls a sentinel element into view whenever any of the given dependencies
- * change. Returns a ref that must be attached to a sentinel element placed at
- * the bottom of the scroll container.
+ * Keeps a chat log pinned to its newest message whenever `deps` change.
  *
- * Usage:
- *   const endRef = useChatScroll([messages, busy]);
- *   …
- *   <div ref={endRef} />
+ * Attach the returned ref to a sentinel at the bottom of the log. Only the
+ * log's own scroll container moves, never the page, so the frozen header
+ * and the rest of the screen stay put while messages arrive.
  */
 export function useChatScroll(deps: unknown[]): React.RefObject<HTMLDivElement> {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView?.({ behavior: "smooth" });
+    const container = scrollParent(endRef.current);
+    if (container && typeof container.scrollTo === "function") {
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 

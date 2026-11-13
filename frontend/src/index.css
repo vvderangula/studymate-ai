@@ -1,3 +1,273 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Spacing follows a strict 4/8px scale: 4, 8, 12, 16, 24, 32, 48, 64
+ * (Tailwind 1, 2, 3, 4, 6, 8, 12, 16). Card padding is 20/24px (5/6).
+ * Controls share one height scale: 40px (h-10) default, 32px (h-8) compact on desktop only.
+ */
+
+@keyframes view-enter {
+  from {
+    opacity: 0;
+    transform: translateX(var(--enter-x, 0px));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-[15px] leading-6 text-ink antialiased;
+    background-image: linear-gradient(180deg, #fffaf6 0%, #fbf8f5 45%, #faf6f2 100%);
+    background-attachment: fixed;
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  * {
+    scrollbar-color: #e2d5ca transparent;
+  }
+
+  ::selection {
+    @apply bg-accent-tint text-accent-ink;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/50 ring-offset-2 ring-offset-surface;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Page header: title + one-line description */
+  .page-title {
+    @apply text-[1.625rem] font-semibold leading-8 tracking-[-0.025em] text-ink sm:text-display;
+  }
+
+  .page-lede {
+    @apply mt-2 max-w-prose text-[15px] leading-6 text-muted;
+  }
+
+  /* Surfaces */
+  .card {
+    @apply rounded-card border border-line bg-surface shadow-card;
+  }
+
+  .card-pad {
+    @apply p-5 sm:p-6;
+  }
+
+  .card-head {
+    @apply flex min-h-14 items-center justify-between gap-3 border-b border-line px-5 py-2 sm:px-6;
+  }
+
+  .section-title {
+    @apply text-[15px] font-semibold tracking-[-0.01em] text-ink;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex shrink-0 select-none items-center justify-center gap-2 whitespace-nowrap rounded-control text-sm font-medium transition-[background-color,border-color,color,box-shadow] duration-150 disabled:cursor-not-allowed;
+  }
+
+  .btn-md {
+    @apply h-10 px-4;
+  }
+
+  /* Compact: 40px tap target on phones, 32px on larger screens */
+  .btn-sm {
+    @apply h-10 px-3 text-[13px] sm:h-8;
+  }
+
+  /* A light orange gradient, top to bottom, on every primary action. */
+  .btn-primary {
+    @apply btn btn-md bg-accent-strong bg-gradient-to-b from-accent-light to-accent-strong font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_1px_2px_rgba(234,88,12,0.25),0_4px_12px_-4px_rgba(234,88,12,0.45)] hover:from-accent hover:to-accent-hover disabled:bg-line-strong disabled:bg-none disabled:text-muted disabled:shadow-none;
+  }
+
+  .btn-secondary {
+    @apply btn btn-md border border-line-strong bg-surface text-ink hover:border-faint hover:bg-sunken disabled:text-faint disabled:hover:border-line-strong disabled:hover:bg-surface;
+  }
+
+  .btn-quiet {
+    @apply btn btn-sm border border-line-strong bg-surface text-ink-soft hover:border-faint hover:bg-sunken hover:text-ink;
+  }
+
+  .btn-ghost {
+    @apply btn btn-sm text-muted hover:bg-sunken hover:text-ink;
+  }
+
+  /* Form controls */
+  .field-label {
+    @apply mb-2 block text-[13px] font-medium leading-5 text-ink-soft;
+  }
+
+  .field {
+    @apply block h-10 w-full rounded-control border border-line-strong bg-surface px-3 text-sm text-ink shadow-[0_1px_2px_rgba(60,40,25,0.03)] outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-faint hover:border-faint focus:border-accent focus:shadow-focus focus-visible:ring-0 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:bg-sunken disabled:text-muted disabled:hover:border-line-strong;
+  }
+
+  select.field {
+    @apply cursor-pointer appearance-none bg-no-repeat pr-10;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2378716C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-position: right 12px center;
+  }
+
+  /* Segmented control (module picker, mode toggle) */
+  .segmented {
+    @apply grid gap-1 rounded-panel border border-line bg-sunken p-1;
+  }
+
+  .segment {
+    @apply flex min-h-10 w-full items-center justify-center rounded-control px-3 text-[13px] font-medium transition-[background-color,color,box-shadow] duration-150 sm:text-sm;
+  }
+
+  /* The same soft orange gradient as the sliding toggle, so every selection matches. */
+  .segment-on {
+    @apply border border-accent-line/70 bg-gradient-to-b from-white to-accent-soft text-accent-ink shadow-[0_1px_2px_rgba(60,40,25,0.08),0_2px_8px_-4px_rgba(234,88,12,0.35)];
+  }
+
+  .segment-off {
+    @apply border border-transparent text-muted hover:bg-surface/60 hover:text-ink;
+  }
+
+  /* Scrolls if it must, never shows a bar. */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Panes: full-height cards whose middle scrolls and whose ends stay put */
+  .pane {
+    @apply flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface shadow-card;
+  }
+
+  .pane-head {
+    @apply flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-2 sm:px-6;
+  }
+
+  .pane-scroll {
+    @apply min-h-0 flex-1 overflow-y-auto overscroll-contain;
+  }
+
+  .pane-foot {
+    @apply shrink-0 border-t border-line bg-surface px-3 py-3 sm:px-4;
+  }
+
+  .chat-log {
+    @apply mx-auto flex min-h-full w-full max-w-reading flex-col gap-4 px-4 py-6 sm:px-6;
+  }
+
+  /* Content swap: fades and drifts in from the direction of travel */
+  .view-enter {
+    animation: view-enter 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  /* Segmented control: one soft tray, a raised highlight slides to the choice */
+  .segmented-tray {
+    @apply relative gap-1 rounded-[14px] border border-line bg-sunken p-1;
+  }
+
+  .segmented-item {
+    @apply relative z-10 flex h-9 min-w-0 items-center justify-center whitespace-nowrap rounded-[10px] px-4 text-sm font-medium transition-colors duration-300;
+  }
+
+  .segmented-item-on {
+    @apply text-accent-ink;
+  }
+
+  .segmented-item-off {
+    @apply text-muted hover:text-ink;
+  }
+
+  .segmented-glide {
+    @apply pointer-events-none absolute left-0 top-0 rounded-[10px] border border-accent-line bg-gradient-to-b from-accent-soft to-accent-tint shadow-[0_1px_2px_rgba(60,40,25,0.08),0_3px_10px_-4px_rgba(221,76,5,0.45)];
+    transition:
+      transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      width 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      height 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      opacity 150ms ease;
+  }
+
+  /* Composer: one bordered shell holding the textarea + send button */
+  .composer {
+    @apply flex items-end gap-2 rounded-panel border border-line-strong bg-surface p-1 pl-3 shadow-[0_1px_2px_rgba(60,40,25,0.03)] transition-[border-color,box-shadow] duration-150 focus-within:border-accent focus-within:shadow-focus;
+  }
+
+  .composer-input {
+    @apply max-h-40 min-h-10 flex-1 resize-none bg-transparent py-2 text-sm leading-6 text-ink outline-none placeholder:text-faint focus-visible:ring-0 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:text-muted;
+  }
+
+  .composer-send {
+    @apply btn-primary min-w-[4.5rem];
+  }
+
+  /* Messages */
+  .bubble-user {
+    @apply max-w-[85%] whitespace-pre-wrap break-words rounded-bubble rounded-br-control border border-accent-line bg-gradient-to-br from-accent-soft to-accent-tint px-4 py-2 text-sm leading-6 text-ink;
+  }
+
+  .bubble-assistant {
+    @apply max-w-full break-words rounded-bubble rounded-bl-control border border-line bg-surface px-4 py-3 text-sm leading-6 text-ink sm:max-w-[85%];
+  }
+
+  /* Citation chip */
+  .chip {
+    @apply inline-flex h-8 items-center rounded-full border border-accent-line bg-accent-soft px-3 text-xs font-medium text-accent-ink transition-colors duration-150 hover:border-accent/50 hover:bg-accent-tint sm:h-6 sm:px-2;
+  }
+
+  /* Inline feedback */
+  .notice-error {
+    @apply flex items-start gap-2 rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-sm leading-6 text-danger;
+  }
+
+  .notice-success {
+    @apply flex items-start gap-2 text-sm leading-6 text-success;
+  }
+
+  .notice-muted {
+    @apply flex items-start gap-2 text-sm leading-6 text-muted;
+  }
+
+  .notice-icon {
+    @apply flex h-6 shrink-0 items-center;
+  }
+
+  .empty-box {
+    @apply rounded-panel border border-dashed border-line-strong px-4 py-6 text-center text-sm leading-6 text-muted;
+  }
+
+  .typing-dot {
+    @apply h-1.5 w-1.5 animate-pulse rounded-full bg-accent;
+  }
+
+  .spinner {
+    @apply inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-current border-r-transparent;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded-control bg-sunken;
+  }
+
+  .link {
+    @apply rounded font-medium text-accent-strong underline-offset-4 hover:text-accent-hover hover:underline;
+  }
+}

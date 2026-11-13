@@ -1,14 +1,27 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError } from "../api/client";
-import { generalChat, type ChatTurn } from "../api/assistant";
+import {
+  deleteConversation,
+  generalChat,
+  getConversation,
+  listConversations,
+} from "../api/assistant";
+import type { ConversationSummary } from "../api/history";
 import { useChatScroll } from "../hooks/useChatScroll";
+import { timeAgo } from "../lib/time";
 import AcademicSearch from "./AcademicSearch";
+import HistoryList from "./HistoryList";
+import { IconPlus } from "./icons";
+import Segmented from "./Segmented";
+import { EmptyNote, ErrorNotice, TypingIndicator } from "./ui";
+import { Workspace } from "./workspace";
+import Markdown from "./Markdown";
 
 type Tab = "general" | "research";
 
 interface ChatMessage {
-  id: number;
+  id: string;
   role: "user" | "assistant";
   text: string;
 }
@@ -29,52 +42,109 @@ export default function AIAssistant() {
   const [tab, setTab] = useState<Tab>("general");
 
   return (
-    <div className="space-y-5">
-      {/* Mode selector — styled as a pill toggle, not a nav bar */}
-      <div className="flex flex-col gap-1">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-          Mode
-        </p>
-        <div className="inline-flex w-full rounded-lg border border-slate-200 bg-slate-100 p-1 sm:w-auto">
-          {(["general", "research"] as Tab[]).map((name) => {
-            const isActive = tab === name;
-            return (
-              <button
-                key={name}
-                type="button"
-                onClick={() => setTab(name)}
-                className={
-                  "flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors sm:flex-none sm:px-5 " +
-                  (isActive
-                    ? "bg-white text-orange-600 shadow-sm"
-                    : "text-slate-500 hover:text-slate-700")
-                }
-              >
-                {name === "general" ? "General Chat" : "Research Assistant"}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+    <div className="flex flex-col gap-4 lg:h-full">
+      <Segmented
+        label="Mode"
+        options={[
+          { value: "general", label: "General Chat" },
+          { value: "research", label: "Research Assistant" },
+        ]}
+        value={tab}
+        onChange={setTab}
+        className="grid w-full shrink-0 grid-cols-2 sm:w-96"
+      />
 
-      <div className={tab === "general" ? "" : "hidden"} aria-hidden={tab !== "general"}>
+      <div
+        className={tab === "general" ? "view-enter min-h-0 lg:flex-1" : "hidden"}
+        style={{ "--enter-x": "-24px" } as React.CSSProperties}
+        aria-hidden={tab !== "general"}
+      >
         <GeneralChat />
       </div>
 
-      <div className={tab === "research" ? "" : "hidden"} aria-hidden={tab !== "research"}>
+      <div
+        className={tab === "research" ? "view-enter min-h-0 lg:flex-1" : "hidden"}
+        style={{ "--enter-x": "24px" } as React.CSSProperties}
+        aria-hidden={tab !== "research"}
+      >
         <AcademicSearch />
       </div>
     </div>
   );
 }
 
-/** ChatGPT-like general chat panel using the shared LLM service. */
+/**
+ * General chat with saved conversations: the chat list on the left, the
+ * selected (or a new) conversation on the right. Every exchange is stored
+ * on the server; the model gets the stored turns as context.
+ */
 function GeneralChat() {
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [listLoading, setListLoading] = useState(true);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [loadingChat, setLoadingChat] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const openingRef = useRef<string | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useChatScroll([messages, busy]);
+
+  useEffect(() => {
+    let live = true;
+    listConversations()
+      .then((items) => {
+        if (live) setConversations(items);
+      })
+      .catch((err) => {
+        if (live) setError(friendlyError(err, "Could not load your chats."));
+      })
+      .finally(() => {
+        if (live) setListLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  async function openConversation(id: string) {
+    openingRef.current = id;
+    setActiveId(id);
+    setError("");
+    setMessages([]);
+    setLoadingChat(true);
+    try {
+      const detail = await getConversation(id);
+      if (openingRef.current === id) {
+        setMessages(detail.messages.map((m) => ({ id: m.id, role: m.role, text: m.text })));
+      }
+    } catch (err) {
+      if (openingRef.current === id) setError(friendlyError(err, "Could not open this chat."));
+    } finally {
+      if (openingRef.current === id) setLoadingChat(false);
+    }
+  }
+
+  function startNewChat() {
+    openingRef.current = null;
+    setActiveId(null);
+    setMessages([]);
+    setError("");
+    setInput("");
+    setLoadingChat(false);
+    inputRef.current?.focus();
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await deleteConversation(id);
+      setConversations((prev) => prev.filter((item) => item.id !== id));
+      if (id === activeId) startNewChat();
+    } catch (err) {
+      setError(friendlyError(err, "Could not delete this chat."));
+    }
+  }
 
   async function handleSend() {
     const text = input.trim();
@@ -82,23 +152,40 @@ function GeneralChat() {
 
     setInput("");
     setError("");
-
-    const userMsg: ChatMessage = { id: Date.now(), role: "user", text };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [...prev, { id: `local-${Date.now()}`, role: "user", text }]);
     setBusy(true);
 
-    // Build history for context (all previous turns)
-    const history: ChatTurn[] = messages.map((m) => ({
-      role: m.role,
-      content: m.text,
-    }));
-
     try {
-      const result = await generalChat(text, history);
+      const result = await generalChat(text, activeId);
       setMessages((prev) => [
         ...prev,
-        { id: Date.now() + 1, role: "assistant", text: result.answer },
+        { id: `local-${Date.now()}-a`, role: "assistant", text: result.answer },
       ]);
+      openingRef.current = result.conversation_id;
+      setActiveId(result.conversation_id);
+      // Move (or add) this chat to the top of the list.
+      setConversations((prev) => {
+        const existing = prev.find((item) => item.id === result.conversation_id);
+        const now = new Date().toISOString();
+        const updated: ConversationSummary = existing
+          ? {
+              ...existing,
+              message_count: existing.message_count + 2,
+              preview: result.answer.slice(0, 160),
+              updated_at: now,
+            }
+          : {
+              id: result.conversation_id,
+              kind: "assistant",
+              title: result.title,
+              source_id: null,
+              message_count: 2,
+              preview: result.answer.slice(0, 160),
+              created_at: now,
+              updated_at: now,
+            };
+        return [updated, ...prev.filter((item) => item.id !== result.conversation_id)];
+      });
     } catch (err) {
       setError(friendlyError(err, "Failed to get a response. Please try again."));
     } finally {
@@ -113,84 +200,106 @@ function GeneralChat() {
     }
   }
 
+  const activeTitle = conversations.find((item) => item.id === activeId)?.title;
+
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      {/* Conversation */}
-      <div
-        className="max-h-[26rem] min-h-[8rem] space-y-3 overflow-y-auto pr-1"
-        role="log"
-        aria-live="polite"
-        aria-label="General chat conversation"
-      >
-        {messages.length === 0 ? (
-          <p className="py-8 text-center text-sm text-slate-400">
-            Ask me anything — I'm here to help you study.
-          </p>
-        ) : (
-          messages.map((message) => {
-            const isUser = message.role === "user";
-            return (
-              <div
-                key={message.id}
-                className={isUser ? "flex justify-end" : "flex justify-start"}
-              >
-                <div
-                  className={
-                    "max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2 text-sm leading-relaxed " +
-                    (isUser
-                      ? "bg-orange-500 text-white"
-                      : "bg-slate-100 text-slate-800")
-                  }
-                >
-                  {message.text}
-                </div>
-              </div>
-            );
-          })
-        )}
-
-        {busy && (
-          <div
-            className="mr-auto max-w-[85%] rounded-2xl bg-slate-100 px-4 py-2 text-sm text-slate-500"
-            role="status"
-          >
-            <span className="inline-flex items-center gap-2">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-orange-400" />
-              Thinking…
-            </span>
-          </div>
-        )}
-
-        <div ref={endRef} />
-      </div>
-
-      {error && (
-        <p className="mt-3 text-sm text-red-600" role="alert">
-          {error}
-        </p>
-      )}
-
-      {/* Composer */}
-      <div className="mt-4 flex items-end gap-2">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={busy}
-          rows={1}
-          placeholder="Ask me anything…  (Enter to send, Shift+Enter for new line)"
-          aria-label="Chat message"
-          className="max-h-32 min-h-[2.75rem] flex-1 resize-y rounded-lg border border-slate-300 px-4 py-2.5 text-sm leading-relaxed outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50"
+    <Workspace
+      aside={
+        <HistoryList
+          title="Your chats"
+          loading={listLoading}
+          items={conversations.map((item) => ({
+            id: item.id,
+            title: item.title,
+            subtitle: item.preview,
+            meta: timeAgo(item.updated_at),
+          }))}
+          selectedId={activeId}
+          emptyText="Your chats will appear here."
+          onSelect={(id) => void openConversation(id)}
+          onDelete={(id) => void handleDelete(id)}
+          action={
+            <button type="button" onClick={startNewChat} className="btn-quiet">
+              <IconPlus className="h-4 w-4" />
+              New chat
+            </button>
+          }
         />
-        <button
-          type="button"
-          onClick={() => void handleSend()}
-          disabled={busy || !input.trim()}
-          className="rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
-        >
-          {busy ? "…" : "Send"}
-        </button>
+      }
+    >
+      <div className="pane">
+        <div className="pane-head">
+          <h2 className="section-title min-w-0 truncate">{activeTitle ?? "New chat"}</h2>
+          <span className="hidden shrink-0 text-xs text-muted sm:inline">Saved automatically</span>
+        </div>
+
+        <div className="pane-scroll">
+          <div
+            className="chat-log"
+            role="log"
+            aria-live="polite"
+            aria-label="General chat conversation"
+          >
+            {loadingChat ? (
+              <div className="space-y-4" role="status" aria-label="Loading chat">
+                <div className="skeleton ml-auto h-10 w-2/3" />
+                <div className="skeleton h-20 w-5/6" />
+              </div>
+            ) : messages.length === 0 ? (
+              <EmptyNote>Ask me anything. I can explain a concept, check your understanding or help you plan revision.</EmptyNote>
+            ) : (
+              messages.map((message) => {
+                const isUser = message.role === "user";
+                return (
+                  <div
+                    key={message.id}
+                    className={isUser ? "flex justify-end" : "flex justify-start"}
+                  >
+                    <div className={isUser ? "bubble-user" : "bubble-assistant"}>
+                      {isUser ? message.text : <Markdown>{message.text}</Markdown>}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+
+            {busy && <TypingIndicator>Thinking…</TypingIndicator>}
+
+            <div ref={endRef} />
+          </div>
+        </div>
+
+        <div className="pane-foot">
+          <div className="mx-auto w-full max-w-reading">
+            {error && <ErrorNotice className="mb-3">{error}</ErrorNotice>}
+            <div className="composer">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={busy}
+                rows={1}
+                placeholder="Ask me anything…"
+                aria-label="Chat message"
+                className="composer-input"
+              />
+              <button
+                type="button"
+                onClick={() => void handleSend()}
+                disabled={busy || !input.trim()}
+                className="composer-send"
+              >
+                {busy && <span className="spinner" aria-hidden="true" />}
+                Send
+              </button>
+            </div>
+            <p className="mt-2 hidden text-center text-xs text-faint sm:block">
+              Enter to send, Shift + Enter for a new line
+            </p>
+          </div>
+        </div>
       </div>
-    </div>
+    </Workspace>
   );
 }

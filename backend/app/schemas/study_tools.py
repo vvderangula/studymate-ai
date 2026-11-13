@@ -1,5 +1,6 @@
 """Pydantic schemas for the AI Study Tools (quiz and notes) feature."""
 
+from datetime import datetime
 from enum import Enum
 from typing import Literal
 
@@ -64,13 +65,16 @@ class QuizQuestionResponse(BaseModel):
 
 
 class QuizResponse(BaseModel):
-    """A generated quiz for a source."""
+    """A generated (and saved) quiz for a source."""
 
     source_id: str
     source_type: SourceType
     question_type: QuestionType
     difficulty: Difficulty
     questions: list[QuizQuestionResponse]
+    id: str | None = None
+    source_title: str = ""
+    created_at: datetime | None = None
 
 
 class NoteType(str, Enum):
@@ -92,9 +96,31 @@ class NotesRequest(BaseModel):
 
 
 class NotesResponse(BaseModel):
-    """Generated Markdown notes for a source."""
+    """Generated (and saved) Markdown notes for a source."""
 
     source_id: str
     source_type: SourceType
     note_type: NoteType
     content: str
+    id: str | None = None
+    source_title: str = ""
+    created_at: datetime | None = None
+
+
+class StudyHistoryItem(BaseModel):
+    """A saved quiz or note set, as listed in history."""
+
+    id: str
+    kind: Literal["quiz", "notes"]
+    source_type: SourceType
+    source_id: str
+    source_title: str
+    created_at: datetime
+    # quiz: "Multiple choice, medium, 10 questions"; notes: the notes type
+    label: str
+
+
+class StudyHistoryResponse(BaseModel):
+    """Everything the user generated, newest first."""
+
+    items: list[StudyHistoryItem]

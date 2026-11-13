@@ -5,6 +5,7 @@ export interface AuthUser {
   full_name: string;
   email: string;
   access_token: string;
+  role?: "admin" | "user";
 }
 
 export interface RegisterParams {

@@ -7,6 +7,8 @@ import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
 import HomePage from "./pages/HomePage";
+import AdminPage from "./pages/AdminPage";
+import AdminRoute from "./components/AdminRoute";
 
 /** Root component: declares the application's route table. */
 export default function App() {
@@ -28,6 +30,14 @@ export default function App() {
         >
           <Route index element={<DashboardPage />} />
           <Route path="learn" element={<HomePage />} />
+          <Route
+            path="admin"
+            element={
+              <AdminRoute>
+                <AdminPage />
+              </AdminRoute>
+            }
+          />
         </Route>
 
         {/* Fallback */}

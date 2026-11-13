@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from app.models.pdf import PdfMetadata
 from app.repositories.pdf_repository import PdfMetadataRepository
-from app.services.chunk_storage import ChunkStorageService
+from app.repositories.chunk_repository import ChunkRepository
 from app.services.pdf_extractor import PDFExtractionError, PDFExtractor
 from app.services.pdf_storage import PDFStorageService
 from app.services.text_chunker import TextChunker
@@ -43,7 +43,7 @@ class ProcessingConfig:
     storage: PDFStorageService
     extractor: PDFExtractor
     chunker: TextChunker
-    chunk_storage: ChunkStorageService
+    chunk_storage: ChunkRepository
     repository: PdfMetadataRepository
 
 
